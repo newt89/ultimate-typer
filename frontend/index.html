@@ -431,7 +431,8 @@ function renderWords(){
   S.words.forEach((word,wi)=>{
     const div=document.createElement('div');
     div.className='w'+(wi===S.wi?' cur':wi<S.wi?' done':''); div.id='w'+wi;
-    [...word].forEach((ch,ci)=>{
+    const displayWord=S.lang==='arabic'?[...stripTajweed(word)]:[...word];
+    displayWord.forEach((ch,ci)=>{
       const sp=document.createElement('span');
       sp.className='ch '+cc(); sp.id='c'+wi+'_'+ci; sp.textContent=ch;
       sp.classList.add(wi<S.wi?'ok':wi===S.wi?(ci<[...S.inp].length?([...S.inp][ci]===ch?'ok':'bad'):ci===[...S.inp].length?'cur':'dim'):'dim');
@@ -477,11 +478,18 @@ function onInput(e){
   updateWord(); tick();
 }
 function nc(ch){
-  ch=ch.replace(/[\u064B-\u065F\u0670]/g,'');
+  // Strip ALL diacritics/tajweed marks
+  ch=ch.replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g,'');
+  ch=ch.replace(/\u0640/g,''); // tatweel
   ch=ch.replace(/[\u0622\u0623\u0625\u0671-\u0675]/g,'\u0627');
   ch=ch.replace(/\u0629/g,'\u0647');
   ch=ch.replace(/\u0649/g,'\u064A');
+  ch=ch.replace(/[\u0621\u0654\u0655]/g,''); // hamza standalone
   return ch.normalize('NFC');
+}
+// Strip tajweed from a full word before rendering
+function stripTajweed(w){
+  return w.replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u0640\u0621\u0654\u0655]/g,'').normalize('NFC');
 }
 function commitWord(){
   S.correct++; S.rollWin.push({t:Date.now(),c:S.correct});
@@ -581,6 +589,7 @@ function endSession(){clearInterval(S.timer);S.timer=null;go('home');}
 
 // ── FOCUS
 function focusInput(){
+  if(S.pausedAt) return;
   document.getElementById('inp').focus();
   document.getElementById('fov').classList.add('hide');
   if(!S.timer&&S.startTime&&!S.pausedAt) S.timer=setInterval(tick,200);
