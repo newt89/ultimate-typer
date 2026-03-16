@@ -150,6 +150,7 @@ tr:hover td{background:rgba(11,16,24,.8)}
     <button class="nb on" onclick="go('home')">HOME</button>
     <button class="nb" onclick="go('stats')">STATS</button>
     <button class="nb" onclick="go('leaderboard')">LEADERBOARD</button>
+    <button class="nb" id="auth-nav-btn" onclick="showAuthModal()" style="border-color:rgba(0,212,255,.3)">&#128100; LOG IN</button>
     <a class="donate" href="https://www.paypal.me/newt89" target="_blank" rel="noopener">&#9749; DONATE</a>
   </nav>
 </header>
@@ -158,10 +159,10 @@ tr:hover td{background:rgba(11,16,24,.8)}
   <div style="margin-top:26px">
     <p class="sec-lbl">SELECT LANGUAGE</p>
     <div class="lang-grid">
-      <div class="lc" onclick="pickLang('english')"><span class="flag">&#x1F1EC;&#x1F1E7;</span><div class="lname">ENGLISH</div><div class="script">The quick brown fox</div><div class="desc">Classics &middot; Home row &middot; Common words</div></div>
-      <div class="lc" onclick="pickLang('russian')"><span class="flag">&#x1F1F7;&#x1F1FA;</span><div class="lname">RUSSIAN</div><div class="script">&#x41F;&#x440;&#x438;&#x432;&#x435;&#x442;</div><div class="desc">Pushkin &middot; Tolstoy &middot; Dostoevsky</div></div>
-      <div class="lc" onclick="pickLang('arabic')"><span class="flag">&#x1F54C;</span><div class="lname">ARABIC</div><div class="script" style="font-family:var(--arab);direction:rtl;font-size:1.4rem">&#x628;&#x633;&#x645; &#x627;&#x644;&#x644;&#x647;</div><div class="desc">All 114 Surahs in order</div></div>
-      <div class="lc" onclick="pickLang('sanskrit')"><span class="flag">&#x1F549;&#xFE0F;</span><div class="lname">SANSKRIT</div><div class="script" style="font-family:var(--dev)">&#x928;&#x92E;&#x938;&#x94D;&#x924;&#x947;</div><div class="desc">Bhagavad Gita &middot; Home row trainer</div></div>
+      <div class="lc" onclick="pickLang('english',this)"><span class="flag">&#x1F1EC;&#x1F1E7;</span><div class="lname">ENGLISH</div><div class="script">The quick brown fox</div><div class="desc">Classics &middot; Home row &middot; Common words</div></div>
+      <div class="lc" onclick="pickLang('russian',this)"><span class="flag">&#x1F1F7;&#x1F1FA;</span><div class="lname">RUSSIAN</div><div class="script">&#x41F;&#x440;&#x438;&#x432;&#x435;&#x442;</div><div class="desc">Pushkin &middot; Tolstoy &middot; Dostoevsky</div></div>
+      <div class="lc" onclick="pickLang('arabic',this)"><span class="flag">&#x1F54C;</span><div class="lname">ARABIC</div><div class="script" style="font-family:var(--arab);direction:rtl;font-size:1.4rem">&#x628;&#x633;&#x645; &#x627;&#x644;&#x644;&#x647;</div><div class="desc">All 114 Surahs in order</div></div>
+      <div class="lc" onclick="pickLang('sanskrit',this)"><span class="flag">&#x1F549;&#xFE0F;</span><div class="lname">SANSKRIT</div><div class="script" style="font-family:var(--dev)">&#x928;&#x92E;&#x938;&#x94D;&#x924;&#x947;</div><div class="desc">Bhagavad Gita &middot; Home row trainer</div></div>
     </div>
     <div id="prompt-section">
       <p class="sec-lbl">SELECT TEXT</p>
@@ -476,7 +477,26 @@ function saveUser(name){
   const v=name||(document.getElementById('uinput').value.trim())||'anonymous';
   S.username=v; localStorage.setItem('ut_user',v);
   document.getElementById('umodal').classList.remove('show');
-  document.querySelector('header .logo small').textContent=v!=='anonymous'?'  👤 '+v:'  v2.0';
+  updateAuthBtn();
+}
+function updateAuthBtn(){
+  const btn=document.getElementById('auth-nav-btn');
+  if(!btn) return;
+  const v=S.username;
+  if(v&&v!=='anonymous'){
+    btn.textContent='👤 '+v;
+    btn.style.color='var(--cyan)';
+    btn.style.borderColor='var(--cyan)';
+    btn.onclick=function(){if(confirm('Log out '+v+'?')){S.username=null;localStorage.removeItem('ut_user');updateAuthBtn();}};
+  } else {
+    btn.textContent='🔑 LOG IN';
+    btn.style.color='';btn.style.borderColor='';
+    btn.onclick=showAuthModal;
+  }
+}
+function showAuthModal(){
+  document.getElementById('umodal').classList.add('show');
+  setTimeout(function(){var i=document.getElementById('uinput');if(i)i.focus();},100);
 }
 
 // ── NAV
@@ -492,11 +512,10 @@ function go(s){
 }
 
 // ── LANG / PROMPT
-async function pickLang(lang){
-  if(!S.username){document.getElementById('umodal').classList.add('show');setTimeout(()=>document.getElementById('uinput').focus(),100);return;}
+async function pickLang(lang,el){
   S.lang=lang;
   document.querySelectorAll('.lc').forEach(c=>c.classList.remove('sel'));
-  event.currentTarget.classList.add('sel');
+  if(el) el.classList.add('sel');
   document.getElementById('prompt-section').style.display='block';
   document.getElementById('prompt-list').innerHTML='<div style="color:var(--muted);padding:10px;font-size:.72rem">Loading...</div>';
   const res=await api('/api/prompts/'+lang);
@@ -512,11 +531,32 @@ async function startGame(pid,pname){
   const d=await api('/api/words','POST',{lang:S.lang,prompt_id:pid});
   if(!d||!d.words||!d.words.length){toast('Could not load words');return;}
   clearInterval(S.timer);
-  // Strip any remaining tajweed from Arabic words
+  // Strip ALL tajweed — use actual Unicode chars in regex (not escape sequences)
   let cleanWords=d.words;
-  if(d.lang==='arabic'||S.lang==='arabic'){
-    const _DIAC=/[ؐ-ًؚ-ٟۖ-ۜ۟-۪ۤۧۨ-ۭـٰ]/g;
-    cleanWords=d.words.map(w=>w.replace(_DIAC,'').normalize('NFC')).filter(w=>w.trim());
+  if((d.lang||S.lang)==='arabic'){
+    cleanWords=d.words.map(function(w){
+      // Remove diacritics using actual character ranges
+      var s=w;
+      // Harakat and diacritics (U+064B–U+065F)
+      s=s.replace(/[ًٌٍَُِّْٕٖٜٟٓٔٗ٘ٙٚٛٝٞ]/g,'');
+      // Superscript alef
+      s=s.replace(/ٰ/g,'');
+      // Tatweel
+      s=s.replace(/ـ/g,'');
+      // Arabic honorifics U+0610-U+061A
+      s=s.replace(/[ؘؙؚؐؑؒؓؔؕؖؗ]/g,'');
+      // High/low marks U+06D6-U+06ED
+      s=s.replace(/[ۣ۪ۭۖۗۘۙۚۛۜ۟۠ۡۢۤۧۨ۫۬]/g,'');
+      // Normalise alef variants to plain alef
+      s=s.replace(/[آأإٱٲٳٵ]/g,'ا');
+      // Tah marbuta to ha
+      s=s.replace(/ة/g,'ه');
+      // Alef maqsura to ya
+      s=s.replace(/ى/g,'ي');
+      // Remove standalone hamza
+      s=s.replace(/[ءٕٔ]/g,'');
+      return s.normalize('NFC');
+    }).filter(function(w){return w.length>0;});
   }
   Object.assign(S,{words:cleanWords,dir:d.dir||'ltr',promptId:pid,promptName:pname,
     wi:0,inp:'',correct:0,errors:0,startTime:null,pausedAt:null,totalPaused:0,
@@ -601,13 +641,44 @@ function onInput(e){
   updateWord(); tick();
 }
 // Full Arabic normalisation — strips ALL tajweed/diacritics
+// Also normalises letter variants so comparison works correctly
 function nc(ch){
-  ch=ch.replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g,'');
+  if(!ch) return '';
+  // Strip all diacritics/tajweed
+  ch=ch.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g,'');
   ch=ch.replace(/\u0640/g,''); // tatweel
-  ch=ch.replace(/[\u0622\u0623\u0625\u0671-\u0675]/g,'\u0627');
-  ch=ch.replace(/\u0629/g,'\u0647');
-  ch=ch.replace(/[\u0649\u06CC\u0626]/g,'\u064A');
-  ch=ch.replace(/[\u0621\u0654\u0655]/g,'');
+  // Normalise letter variants
+  ch=ch.replace(/[\u0622\u0623\u0625\u0671-\u0675\u0627]/g,'\u0627'); // all alef forms → alef
+  ch=ch.replace(/\u0629/g,'\u0647');   // tah marbuta → ha
+  ch=ch.replace(/[\u0649\u06CC\u0626]/g,'\u064A'); // alef maqsura → ya
+  ch=ch.replace(/\u06A9/g,'\u0643');   // Farsi kaf → kaf
+  ch=ch.replace(/[\u06BE\u06C1]/g,'\u0647'); // he variants → ha
+  ch=ch.replace(/\u0624/g,'\u0648');   // waw with hamza → waw
+  ch=ch.replace(/[\u0621\u0654\u0655]/g,''); // hamza standalone
+  // CRITICAL: also normalise lam variants
+  // Some fonts/keyboards send lam in different forms
+  ch=ch.replace(/\uFEFB/g,'\u0644\u0627'); // lam-alef ligature
+  ch=ch.replace(/\uFEFC/g,'\u0644\u0627');
+  ch=ch.replace(/[\uFE8E-\uFEFC]/g,s=>{
+    // Presentation forms → base letter
+    const map={
+      '\uFE8D':'\u0627','\uFE8E':'\u0627',
+      '\uFE8F':'\u0628','\uFE90':'\u0628','\uFE91':'\u0628','\uFE92':'\u0628',
+      '\uFEAF':'\uFEAF','\uFEB0':'\u062F',
+      '\uFEBD':'\u062E','\uFEBE':'\u062E','\uFEBF':'\u062E','\uFEC0':'\u062E',
+      '\uFEC9':'\u0639','\uFECA':'\u0639','\uFECB':'\u0639','\uFECC':'\u0639',
+      '\uFECF':'\u063A','\uFED0':'\u063A','\uFED1':'\u063A','\uFED2':'\u063A',
+      '\uFED3':'\u0641','\uFED4':'\u0641','\uFED5':'\u0641','\uFED6':'\u0641',
+      '\uFEDB':'\u0643','\uFEDC':'\u0643','\uFEDD':'\u0643','\uFEDE':'\u0643',
+      '\uFEDF':'\u0644','\uFEE0':'\u0644','\uFEE1':'\u0644','\uFEE2':'\u0644',
+      '\uFEE3':'\u0645','\uFEE4':'\u0645','\uFEE5':'\u0645','\uFEE6':'\u0645',
+      '\uFEE7':'\u0646','\uFEE8':'\u0646','\uFEE9':'\u0646','\uFEEA':'\u0646',
+      '\uFEEB':'\u0647','\uFEEC':'\u0647','\uFEED':'\u0647','\uFEEE':'\u0647',
+      '\uFEEF':'\u0649','\uFEF0':'\u0649','\uFEF1':'\u064A','\uFEF2':'\u064A',
+      '\uFEF3':'\u064A','\uFEF4':'\u064A',
+    };
+    return map[s]||s;
+  });
   return ch.normalize('NFC');
 }
 // Arabic rendering: whole word as ONE span (letters always connect)
@@ -647,20 +718,27 @@ function renderArabicWord(word,wi,isCur,isPast){
 // Update Arabic word display and its indicator bar
 function updateArabicWord(){
   const word=S.words[S.wi]||'';
-  const chars=[...word];
+  // Re-strip word chars in case any diacritics slipped through
+  // Strip diacritics using literal chars
+  var _dRx=/[ًٌٍَُِّْٰٕٖٜٟٓٔٗ٘ٙٚٛٝٞـۣ۪ۭؐؑؒؓؔؕۖۗۘۙۚۛۜ۟۠ۡۢۤۧۨ۫۬]/g;
+  const cleanWord=word.replace(_dRx,'').replace(/[آأإٱ-ٵ]/g,'ا').replace(/ة/g,'ه').replace(/ى/g,'ي').replace(/[ءٕٔ]/g,'').normalize('NFC');
+  const chars=[...cleanWord];
   const typed=[...S.inp];
   const sp=document.getElementById('c'+S.wi+'_0');
   const wdiv=document.getElementById('w'+S.wi);
-  if(!sp||!wdiv) return;
+  const bar=document.getElementById('bar'+S.wi);
+  if(!sp||!wdiv||!bar) return;
 
-  // Count correct chars
+  // Update existing dots for each character in the word
   let allOk=true, hasErr=false;
   chars.forEach((ch,ci)=>{
     const dot=document.getElementById('dot'+S.wi+'_'+ci);
     if(!dot) return;
     dot.className='ara-dot';
     if(ci<typed.length){
-      const ok=nc(typed[ci])===nc(ch);
+      const _tc=nc(typed[ci]), _wc=nc(ch);
+      if(_tc!==_wc) console.log('MISMATCH pos='+ci+' typed='+[...typed[ci]].map(c=>'U+'+c.charCodeAt(0).toString(16)).join('')+' expect='+[...ch].map(c=>'U+'+c.charCodeAt(0).toString(16)).join(''));
+      const ok=_tc===_wc;
       dot.classList.add(ok?'ok':'bad');
       if(!ok) hasErr=true;
     } else if(ci===typed.length){
@@ -670,17 +748,33 @@ function updateArabicWord(){
     }
   });
 
-  // Colour the whole word span based on state
+  // Extra typed chars beyond word length — show red overflow dots
+  // Remove old overflow dots first
+  bar.querySelectorAll('.ara-dot-extra').forEach(d=>d.remove());
+  const extra=typed.length-chars.length;
+  if(extra>0){
+    allOk=false; hasErr=true;
+    for(let i=0;i<extra;i++){
+      const dot=document.createElement('div');
+      dot.className='ara-dot ara-dot-extra bad';
+      dot.style.opacity='0.7';
+      bar.appendChild(dot); // appended at end = leftmost in RTL bar
+    }
+  }
+
+  // Colour the whole word span
   sp.className='ch ara';
   wdiv.classList.remove('ara-ok','ara-bad');
   if(typed.length===0){
     sp.classList.add('dim');
+  } else if(typed.length>chars.length){
+    sp.classList.add('bad'); wdiv.classList.add('ara-bad');
   } else if(hasErr){
     sp.classList.add('bad'); wdiv.classList.add('ara-bad');
   } else if(allOk&&typed.length>=chars.length){
     sp.classList.add('ok'); wdiv.classList.add('ara-ok');
   } else {
-    sp.classList.add('ok'); // partially typed correctly = green word
+    sp.classList.add('ok');
   }
 }
 function commitWord(){
@@ -879,7 +973,9 @@ function toast(msg,ms=3200){const el=document.getElementById('toast');el.textCon
 function q(s){return(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
 
 // ── INIT
-if(!S.username) setTimeout(()=>document.getElementById('umodal').classList.add('show'),900);
+// Show login prompt only when user clicks leaderboard or stats
+// Restore username display on load
+updateAuthBtn();
 </script>
 </body>
 </html>
