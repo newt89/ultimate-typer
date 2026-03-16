@@ -445,7 +445,7 @@ def get_words():
             try: raw=_fetch_surah(int(pid[6:])) or ARABIC_BUILTIN['al_fatiha']
             except: raw=ARABIC_BUILTIN['al_fatiha']
         else: raw=ARABIC_BUILTIN.get(pid,ARABIC_BUILTIN['al_fatiha'])
-        raw=_RE_DIAC.sub('',raw); words=[deep_norm_ar(w) for w in raw.split() if w]
+        raw=_strip_all_ar(raw); words=[w for w in raw.split() if w]
 
     elif lang=='sanskrit':
         if pid.startswith('sa_level'):
@@ -462,18 +462,35 @@ def get_words():
 
     return jsonify({"lang":lang,"words":words,"dir":direction})
 
+def _strip_all_ar(text):
+    """Nuclear Arabic diacritic removal — strips everything non-letter."""
+    if not text: return text
+    # All diacritic ranges
+    text = re.sub(r'[\u0600-\u0615]', '', text)   # Arabic signs
+    text = re.sub(r'[\u0610-\u061A]', '', text)   # honorifics
+    text = re.sub(r'[\u064B-\u065F]', '', text)   # all harakat/diacritics
+    text = re.sub(r'[\u0670]',        '', text)   # superscript alef
+    text = re.sub(r'[\u06D6-\u06DC]', '', text)   # small high marks
+    text = re.sub(r'[\u06DF-\u06E4]', '', text)   # more marks
+    text = re.sub(r'[\u06E7-\u06E8]', '', text)   # small high yeh/noon
+    text = re.sub(r'[\u06EA-\u06ED]', '', text)   # more small marks
+    text = re.sub(r'\u0640',          '', text)   # tatweel
+    text = re.sub(r'[\u200B-\u200F\u202A-\u202E\uFEFF]', '', text)
+    return deep_norm_ar(text)
+
 def _fetch_surah(n):
-    try:
-        url=f"https://api.alquran.cloud/v1/surah/{n}"
-        data=json.loads(urlopen(Request(url,headers={"User-Agent":"UltimateTyper/3.0"}),timeout=12).read().decode())
-        if data.get("code")==200:
-            raw=" ".join(a["text"] for a in data["data"]["ayahs"])
-            # Strip ALL diacritics and tajweed marks at source
-            raw=_RE_DIAC.sub("",raw)
-            raw=re.sub(r'\u0640','',raw)  # tatweel
-            raw=re.sub(r'[\u0610-\u061A]','',raw)  # honorifics
-            return deep_norm_ar(raw)
-    except: pass
+    # Try the simple/clean Arabic edition first (no diacritics)
+    sources = [
+        f"https://api.alquran.cloud/v1/surah/{n}/ar.simple",
+        f"https://api.alquran.cloud/v1/surah/{n}",
+    ]
+    for url in sources:
+        try:
+            data=json.loads(urlopen(Request(url,headers={"User-Agent":"UltimateTyper/3.0"}),timeout=12).read().decode())
+            if data.get("code")==200:
+                raw=" ".join(a["text"] for a in data["data"]["ayahs"])
+                return _strip_all_ar(raw)
+        except: continue
     return ""
 
 @app.route('/api/session', methods=['POST'])

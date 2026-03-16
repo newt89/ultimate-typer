@@ -71,16 +71,26 @@ nav{display:flex;gap:4px;flex-wrap:wrap}
 #words-wrap{position:relative;cursor:text}
 #words-outer{height:140px;overflow:hidden;mask-image:linear-gradient(to bottom,transparent,#000 12%,#000 88%,transparent)}
 #words-inner{position:absolute;width:100%;display:flex;flex-wrap:wrap;gap:10px 13px;align-content:flex-start;padding:6px 0;transition:transform .1s ease}
-#words-inner.rtl{direction:rtl;justify-content:flex-end}
+#words-inner.rtl{direction:rtl;justify-content:flex-end;unicode-bidi:bidi-override}
 .w{display:inline-flex;padding:2px 3px;border-radius:3px}
 .w.cur{background:rgba(0,212,255,.07);border-bottom:2px solid var(--cyan)}
 .w.done{opacity:.35}
 .ch{transition:color .04s;line-height:1.4}
 .ch.lat{font-family:var(--mono);font-size:1.42rem}
-.ch.ara{font-family:var(--arab);font-size:1.9rem;display:inline;unicode-bidi:normal}
+.ch.ara{font-family:var(--arab);font-size:1.9rem;display:inline}
 .ch.dev{font-family:var(--dev);font-size:1.65rem}
+/* Arabic: inline spans in RTL context — browser shaping connects letters */
+.w.ara-word{display:inline;direction:rtl;unicode-bidi:embed}
 .ch.ok{color:var(--green)}.ch.bad{color:var(--red);text-decoration:underline}
 .ch.cur{color:var(--cyan);border-bottom:2px solid var(--cyan)}.ch.dim{color:var(--muted)}
+/* Arabic per-char indicator bar */
+.ara-bar{display:flex;flex-direction:row;gap:1px;margin-top:4px;min-height:6px;direction:rtl;width:100%}
+.ara-dot{flex:1;max-width:14px;height:5px;border-radius:2px;background:var(--muted);transition:background .06s}
+.ara-dot.ok{background:var(--green)}
+.ara-dot.bad{background:var(--red)}
+.ara-dot.cur{background:var(--cyan)}
+.w.ara-ok{border-color:var(--green)!important}
+.w.ara-bad{border-color:var(--red)!important}
 #inp{position:absolute;left:-9999px;opacity:0;width:1px;height:1px}
 #fov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(6,8,14,.8);backdrop-filter:blur(4px);border-radius:6px;cursor:pointer;font-size:.7rem;color:var(--muted);letter-spacing:.12em;transition:opacity .2s;z-index:2}
 #fov.hide{opacity:0;pointer-events:none}
@@ -502,7 +512,13 @@ async function startGame(pid,pname){
   const d=await api('/api/words','POST',{lang:S.lang,prompt_id:pid});
   if(!d||!d.words||!d.words.length){toast('Could not load words');return;}
   clearInterval(S.timer);
-  Object.assign(S,{words:d.words,dir:d.dir||'ltr',promptId:pid,promptName:pname,
+  // Strip any remaining tajweed from Arabic words
+  let cleanWords=d.words;
+  if(d.lang==='arabic'||S.lang==='arabic'){
+    const _DIAC=/[ؐ-ًؚ-ٟۖ-ۜ۟-۪ۤۧۨ-ۭـٰ]/g;
+    cleanWords=d.words.map(w=>w.replace(_DIAC,'').normalize('NFC')).filter(w=>w.trim());
+  }
+  Object.assign(S,{words:cleanWords,dir:d.dir||'ltr',promptId:pid,promptName:pname,
     wi:0,inp:'',correct:0,errors:0,startTime:null,pausedAt:null,totalPaused:0,
     timer:null,wpmHist:[],lastSnap:0,rollWin:[],snapSum:0,snapN:0});
   document.getElementById('words-inner').className=S.dir==='rtl'?'rtl':'';
@@ -521,11 +537,14 @@ const cc=()=>S.lang==='arabic'?'ara':S.lang==='sanskrit'?'dev':'lat';
 function renderWords(){
   const t=document.getElementById('words-inner'); t.innerHTML='';
   S.words.forEach((word,wi)=>{
+    // Arabic: render whole word as one span so letters connect properly
+    if(S.lang==='arabic'){
+      t.appendChild(renderArabicWord(word,wi,wi===S.wi,wi<S.wi));
+      return;
+    }
     const div=document.createElement('div');
     div.className='w'+(wi===S.wi?' cur':wi<S.wi?' done':''); div.id='w'+wi;
-    // Use spread for per-character — Arabic letters stay connected via CSS unicode-bidi
-    const chars=[...word];
-    chars.forEach((ch,ci)=>{
+    [...word].forEach((ch,ci)=>{
       const sp=document.createElement('span');
       sp.className='ch '+cc(); sp.id='c'+wi+'_'+ci; sp.textContent=ch;
       sp.classList.add(wi<S.wi?'ok':wi===S.wi?(ci<[...S.inp].length?([...S.inp][ci]===ch?'ok':'bad'):ci===[...S.inp].length?'cur':'dim'):'dim');
@@ -536,11 +555,20 @@ function renderWords(){
   scrollToCur();
 }
 function updateWord(){
-  const word=[...S.words[S.wi]||''],typed=[...S.inp],cls=cc();
+  if(S.lang==='arabic'){updateArabicWord();return;}
+  const word=[...S.words[S.wi]||''],typed=[...S.inp];
+  const cls=cc();
   word.forEach((ch,ci)=>{
     const sp=document.getElementById('c'+S.wi+'_'+ci);
     if(!sp) return;
-    sp.className='ch '+cls+' '+(ci<typed.length?(typed[ci]===ch?'ok':'bad'):ci===typed.length?'cur':'dim');
+    const base='ch '+cls+' ';
+    if(ci<typed.length){
+      sp.className=base+(nc(typed[ci])===nc(ch)?'ok':'bad');
+    } else if(ci===typed.length){
+      sp.className=base+'cur';
+    } else {
+      sp.className=base+'dim';
+    }
   });
 }
 function scrollToCur(){
@@ -554,7 +582,7 @@ function onKD(e){
   // Disable Tab completely — prevent focus change and skip-word
   if(e.key==='Tab'){e.preventDefault();return;}
   if(e.key==='Backspace'){e.preventDefault();if(S.inp.length){S.inp=[...S.inp].slice(0,-1).join('');updateWord();}return;}
-  // Escape disabled — use BACK button instead
+  // Escape disabled
 }
 function onInput(e){
   const v=e.target.value; e.target.value='';
@@ -582,21 +610,78 @@ function nc(ch){
   ch=ch.replace(/[\u0621\u0654\u0655]/g,'');
   return ch.normalize('NFC');
 }
-// Render Arabic words as connected text using CSS — whole word as one span
+// Arabic rendering: whole word as ONE span (letters always connect)
+// + indicator bar below showing per-character correct/wrong/cursor
 function renderArabicWord(word,wi,isCur,isPast){
   const div=document.createElement('div');
-  div.className='w'+(isCur?' cur':isPast?' done':'');
+  div.style.cssText='display:inline-block;text-align:right;direction:rtl;unicode-bidi:embed';
   div.id='w'+wi;
-  // For Arabic: render the WHOLE word as a single text node so letters connect
-  // Use a single span with the full word — no per-character splitting
+  div.className='w'+(isCur?' cur':isPast?' done':'');
+
+  // Single span = whole word, letters always connect
   const sp=document.createElement('span');
   sp.className='ch ara';
   sp.id='c'+wi+'_0';
+  sp.style.direction='rtl';
   sp.textContent=word;
   if(isPast) sp.classList.add('ok');
-  else if(isCur) sp.classList.add('dim');
+  else sp.classList.add('dim');
   div.appendChild(sp);
+
+  // Indicator bar — one dot per character
+  const bar=document.createElement('div');
+  bar.className='ara-bar';
+  bar.id='bar'+wi;
+  const chars=[...word];
+  chars.forEach((_,ci)=>{
+    const dot=document.createElement('div');
+    dot.className='ara-dot';
+    dot.id='dot'+wi+'_'+ci;
+    if(isPast) dot.classList.add('ok');
+    bar.appendChild(dot);
+  });
+  div.appendChild(bar);
   return div;
+}
+
+// Update Arabic word display and its indicator bar
+function updateArabicWord(){
+  const word=S.words[S.wi]||'';
+  const chars=[...word];
+  const typed=[...S.inp];
+  const sp=document.getElementById('c'+S.wi+'_0');
+  const wdiv=document.getElementById('w'+S.wi);
+  if(!sp||!wdiv) return;
+
+  // Count correct chars
+  let allOk=true, hasErr=false;
+  chars.forEach((ch,ci)=>{
+    const dot=document.getElementById('dot'+S.wi+'_'+ci);
+    if(!dot) return;
+    dot.className='ara-dot';
+    if(ci<typed.length){
+      const ok=nc(typed[ci])===nc(ch);
+      dot.classList.add(ok?'ok':'bad');
+      if(!ok) hasErr=true;
+    } else if(ci===typed.length){
+      dot.classList.add('cur'); allOk=false;
+    } else {
+      allOk=false;
+    }
+  });
+
+  // Colour the whole word span based on state
+  sp.className='ch ara';
+  wdiv.classList.remove('ara-ok','ara-bad');
+  if(typed.length===0){
+    sp.classList.add('dim');
+  } else if(hasErr){
+    sp.classList.add('bad'); wdiv.classList.add('ara-bad');
+  } else if(allOk&&typed.length>=chars.length){
+    sp.classList.add('ok'); wdiv.classList.add('ara-ok');
+  } else {
+    sp.classList.add('ok'); // partially typed correctly = green word
+  }
 }
 function commitWord(){
   S.correct++; S.rollWin.push({t:Date.now(),c:S.correct});
@@ -673,7 +758,17 @@ function tick(){
   document.getElementById('words-v').textContent=S.wi+'/'+S.words.length;
   document.getElementById('eta-v').textContent=eta?fmtEta(eta):'\u2014';
   document.getElementById('prog-v').textContent=pct+'%';
-  document.getElementById('pbar').style.width=pct+'%';
+  // Progress bar with overshoot indicator
+  const pbarEl=document.getElementById('pbar');
+  const overshoot=S.words[S.wi]?Math.max(0,[...S.inp].length-[...S.words[S.wi]].length):0;
+  const overpct=S.words.length>0?Math.min(5,overshoot/S.words.length*100):0;
+  if(overshoot>0){
+    pbarEl.style.background='linear-gradient(90deg,var(--blue) '+pct+'%,var(--red) '+(pct+.1)+'%,var(--red) '+(pct+overpct)+'%,var(--border) '+(pct+overpct)+'%)';
+    pbarEl.style.width=(pct+overpct)+'%';
+  } else {
+    pbarEl.style.background='linear-gradient(90deg,var(--blue),var(--cyan))';
+    pbarEl.style.width=pct+'%';
+  }
   if(e-S.lastSnap>=1&&wpm>0){S.wpmHist.push({t:e,wpm});S.snapSum+=wpm;S.snapN++;S.lastSnap=e;}
 }
 
