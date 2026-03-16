@@ -184,9 +184,9 @@ tr:hover td{background:rgba(11,16,24,.8)}
     <div>PROGRESS&nbsp;<span id="prog-v">0%</span></div>
   </div>
   <div class="pbar-wrap"><div class="pbar" id="pbar"></div></div>
-  <div id="words-wrap" onclick="focusInput()">
+  <div id="words-wrap">
     <div id="words-outer"><div id="words-inner"></div></div>
-    <div id="fov">CLICK TO FOCUS &nbsp;&middot;&nbsp; START TYPING</div>
+    <div id="fov" onclick="focusInput()">CLICK TO FOCUS &nbsp;&middot;&nbsp; START TYPING</div>
   </div>
   <input id="inp" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" oninput="onInput(event)" onkeydown="onKD(event)">
   <div id="pause-ov" style="display:none">&#9646;&#9646;&nbsp; PAUSED &nbsp;&#9646;&#9646;<div style="font-size:.62rem;margin-top:6px">Click RESUME to continue</div></div>
@@ -542,7 +542,7 @@ function fmtT(s){const m=s/60|0;return m>0?m+'m'+(s%60|0)+'s':(s|0)+'s';}
 function fmtEta(s){if(!s||s<=0||s>86400) return '\u2014';const m=s/60|0,h=m/60|0;return h>0?h+'h'+m%60+'m':m>0?m+'m'+(s%60|0)+'s':(s|0)+'s';}
 
 function tick(){
-  if(!S.startTime||S.pausedAt) return;
+  if(!S.startTime||S.pausedAt){if(S.pausedAt)clearInterval(S.timer);return;}
   const e=elapsed(),wpm=getWpm();
   const tot=S.correct+S.errors,acc=tot?Math.round(S.correct/tot*100):100;
   const pct=Math.round(S.wi/S.words.length*100);
