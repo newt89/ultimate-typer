@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Ultimate Typer — Backend API
-Languages: English, Russian, Arabic (Quran), Sanskrit (Bhagavad Gita + Home Row)
-"""
-import os, json, re, time, sqlite3, unicodedata
+"""Ultimate Typer Backend API v3.0 — 100+ Books, Login, 114 Surahs, Russian, Sanskrit"""
+import os, re, time, sqlite3, unicodedata, json, threading, hashlib
 from pathlib import Path
+from urllib.request import urlopen, Request
 from flask import Flask, jsonify, request, g
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", "./data"))
+DATA_DIR  = Path(os.environ.get("DATA_DIR", "./data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DATA_DIR / "sessions.db"
+DB_PATH   = DATA_DIR / "sessions.db"
+BOOKS_DIR = DATA_DIR / "books"
+BOOKS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── Arabic normalisation ───────────────────────────────────────────────────────
 _RE_DIAC = re.compile(
     r'[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]')
 
@@ -34,25 +34,25 @@ def deep_norm_ar(text):
     text = re.sub(r'[\u0621\u0654\u0655]', '', text)
     return unicodedata.normalize("NFC", text)
 
-# ── Database ──────────────────────────────────────────────────────────────────
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(str(DB_PATH))
         g.db.row_factory = sqlite3.Row
         g.db.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                created_at REAL DEFAULT (unixepoch())
+            );
             CREATE TABLE IF NOT EXISTS sessions (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                username    TEXT    DEFAULT 'anonymous',
-                language    TEXT    NOT NULL,
-                prompt_name TEXT,
-                wpm         REAL,
-                avg_wpm     REAL,
-                accuracy    REAL,
-                chars_typed INTEGER,
-                words_typed INTEGER,
-                errors      INTEGER,
-                duration    REAL,
-                created_at  REAL    DEFAULT (unixepoch())
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT DEFAULT 'anonymous',
+                language TEXT NOT NULL, prompt_name TEXT,
+                wpm REAL, avg_wpm REAL, accuracy REAL,
+                chars_typed INTEGER, words_typed INTEGER,
+                errors INTEGER, duration REAL,
+                created_at REAL DEFAULT (unixepoch())
             );
         """)
         g.db.commit()
@@ -63,7 +63,135 @@ def close_db(e=None):
     db = g.pop('db', None)
     if db: db.close()
 
-# ── All 114 Surahs ────────────────────────────────────────────────────────────
+def _hash(pw): return hashlib.sha256(pw.encode()).hexdigest()
+
+@app.route('/api/signup', methods=['POST'])
+def signup():
+    d  = request.json or {}
+    u  = (d.get('username') or '').strip()[:30]
+    pw = (d.get('password') or '').strip()
+    if not u or not pw or len(pw) < 4:
+        return jsonify({"ok": False, "error": "Username and password (min 4 chars) required"}), 400
+    try:
+        get_db().execute("INSERT INTO users (username,password) VALUES (?,?)", (u, _hash(pw)))
+        get_db().commit()
+        return jsonify({"ok": True, "username": u})
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "error": "Username already taken"}), 409
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    d  = request.json or {}
+    u  = (d.get('username') or '').strip()
+    pw = (d.get('password') or '').strip()
+    row = get_db().execute("SELECT username FROM users WHERE username=? AND password=?",
+                           (u, _hash(pw))).fetchone()
+    if row: return jsonify({"ok": True, "username": row['username']})
+    return jsonify({"ok": False, "error": "Wrong username or password"}), 401
+
+# ── Gutenberg books ───────────────────────────────────────────────────────────
+GUTENBERG = {
+    "Pride and Prejudice":("1342","Austen"),"Sense and Sensibility":("161","Austen"),
+    "Emma":("158","Austen"),"Persuasion":("105","Austen"),
+    "Northanger Abbey":("121","Austen"),"Mansfield Park":("141","Austen"),
+    "Bleak House":("1023","Dickens"),"The Pickwick Papers":("580","Dickens"),
+    "Little Dorrit":("963","Dickens"),"Nicholas Nickleby":("967","Dickens"),
+    "The Old Curiosity Shop":("700","Dickens"),"A Tale of Two Cities":("98","Dickens"),
+    "Great Expectations":("1400","Dickens"),"David Copperfield":("766","Dickens"),
+    "Oliver Twist":("730","Dickens"),"Dombey and Son":("821","Dickens"),
+    "Moby Dick":("2701","Melville"),"Bartleby the Scrivener":("11231","Melville"),
+    "Billy Budd":("9798","Melville"),"Typee":("1900","Melville"),
+    "Tom Sawyer":("74","Twain"),"Huckleberry Finn":("76","Twain"),
+    "The Prince and the Pauper":("1837","Twain"),"A Connecticut Yankee":("86","Twain"),
+    "The Innocents Abroad":("3176","Twain"),
+    "The Time Machine":("35","Wells"),"The War of the Worlds":("36","Wells"),
+    "The Invisible Man":("5230","Wells"),"Island of Doctor Moreau":("159","Wells"),
+    "The First Men in the Moon":("1013","Wells"),"The Food of the Gods":("11870","Wells"),
+    "Twenty Thousand Leagues":("164","Verne"),"Journey to the Center":("183","Verne"),
+    "Around the World in 80 Days":("103","Verne"),"From the Earth to the Moon":("83","Verne"),
+    "The Mysterious Island":("1268","Verne"),"Five Weeks in a Balloon":("3526","Verne"),
+    "The Count of Monte Cristo":("1184","Dumas"),"The Three Musketeers":("1257","Dumas"),
+    "The Man in the Iron Mask":("2759","Dumas"),"The Black Tulip":("965","Dumas"),
+    "Don Quixote":("996","Cervantes"),"Robinson Crusoe":("521","Defoe"),
+    "Gulliver's Travels":("829","Swift"),
+    "Dracula":("345","Stoker"),"Jewel of Seven Stars":("13","Stoker"),
+    "Frankenstein":("84","Shelley"),"The Last Man":("18247","Shelley"),
+    "Dr Jekyll and Mr Hyde":("43","Stevenson"),
+    "The King in Yellow":("8492","Chambers"),
+    "The Yellow Wallpaper":("1952","Gilman"),
+    "Treasure Island":("120","Stevenson"),"Kidnapped":("421","Stevenson"),
+    "The Black Arrow":("849","Stevenson"),
+    "Adventures of Sherlock Holmes":("1661","Doyle"),
+    "Memoirs of Sherlock Holmes":("834","Doyle"),
+    "Hound of the Baskervilles":("2852","Doyle"),
+    "Return of Sherlock Holmes":("108","Doyle"),
+    "The Valley of Fear":("3289","Doyle"),
+    "The Sign of the Four":("2097","Doyle"),
+    "Alice in Wonderland":("11","Carroll"),
+    "Through the Looking-Glass":("12","Carroll"),
+    "The Secret Garden":("113","Burnett"),"A Little Princess":("146","Burnett"),
+    "Little Lord Fauntleroy":("404","Burnett"),
+    "Little Women":("514","Alcott"),"Good Wives":("2869","Alcott"),
+    "Little Men":("2788","Alcott"),"Jo's Boys":("1420","Alcott"),
+    "The Call of the Wild":("215","London"),"White Fang":("910","London"),
+    "The Sea-Wolf":("1074","London"),"Martin Eden":("1056","London"),
+    "The Scarlet Letter":("25344","Hawthorne"),
+    "House of Seven Gables":("77","Hawthorne"),
+    "The Legend of Sleepy Hollow":("41","Irving"),
+    "The Picture of Dorian Gray":("174","Wilde"),
+    "The Importance of Being Earnest":("844","Wilde"),
+    "The Canterville Ghost":("14522","Wilde"),
+    "Ethan Frome":("4517","Wharton"),"The Age of Innocence":("541","Wharton"),
+    "The Wonderful Wizard of Oz":("55","Baum"),"The Marvelous Land of Oz":("54","Baum"),
+    "Ozma of Oz":("33361","Baum"),"The Road to Oz":("26624","Baum"),
+    "Hamlet":("1524","Shakespeare"),"Romeo and Juliet":("1513","Shakespeare"),
+    "Macbeth":("1533","Shakespeare"),"Othello":("1531","Shakespeare"),
+    "King Lear":("1532","Shakespeare"),"The Tempest":("23042","Shakespeare"),
+    "A Midsummer Night's Dream":("1514","Shakespeare"),
+    "The Merchant of Venice":("1515","Shakespeare"),
+    "War and Peace":("2600","Tolstoy"),"Anna Karenina":("1399","Tolstoy"),
+    "Crime and Punishment":("2554","Dostoevsky"),
+    "The Brothers Karamazov":("28054","Dostoevsky"),
+    "Les Miserables":("135","Hugo"),
+    "The Iliad":("6130","Homer"),"The Odyssey":("1727","Homer"),
+    "Paradise Lost":("26","Milton"),
+    "Middlemarch":("145","Eliot"),
+    "Jane Eyre":("1260","Bronte"),"Wuthering Heights":("768","Bronte"),
+    "Tess of the d'Urbervilles":("110","Hardy"),
+    "Far from the Madding Crowd":("107","Hardy"),
+    "The Mayor of Casterbridge":("143","Hardy"),
+}
+
+def _bpath(t): return BOOKS_DIR / f"{re.sub(r'[^\\w]','_',t)[:45]}.txt"
+
+def _dl_book(title, gid):
+    p = _bpath(title)
+    if p.exists() and p.stat().st_size > 2000: return True
+    for url in [f"https://www.gutenberg.org/files/{gid}/{gid}-0.txt",
+                f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt"]:
+        try:
+            data = urlopen(Request(url, headers={"User-Agent":"Mozilla/5.0"}),
+                           timeout=25).read().decode("utf-8", errors="replace")
+            for m in ["*** START OF THE PROJECT","*** START OF THIS PROJECT"]:
+                i = data.find(m)
+                if i != -1: data = data[data.find("\n",i)+1:]; break
+            for m in ["*** END OF THE PROJECT","*** END OF THIS PROJECT"]:
+                i = data.find(m)
+                if i != -1: data = data[:i]; break
+            text = " ".join(l.strip() for l in data.splitlines() if l.strip())
+            if len(text) < 2000: continue
+            p.write_text(text[:800000], encoding="utf-8")
+            return True
+        except: continue
+    return False
+
+def _bg_dl():
+    for t,(gid,auth) in GUTENBERG.items():
+        _dl_book(t, gid); time.sleep(0.4)
+
+threading.Thread(target=_bg_dl, daemon=True).start()
+
+# ── 114 Surahs ────────────────────────────────────────────────────────────────
 SURAHS = [
     (1,"الفاتحة","Al-Fatiha",7),(2,"البقرة","Al-Baqara",286),
     (3,"آل عمران","Al-Imran",200),(4,"النساء","An-Nisa",176),
@@ -124,580 +252,264 @@ SURAHS = [
     (113,"الفلق","Al-Falaq",5),(114,"الناس","An-Nas",6),
 ]
 
-ARABIC_EXTRA = {
-    "ayat_kursi": "الله لا اله الا هو الحي القيوم لا تاخذه سنة ولا نوم له ما في السماوات وما في الارض من ذا الذي يشفع عنده الا باذنه يعلم ما بين ايديهم وما خلفهم ولا يحيطون بشيء من علمه الا بما شاء وسع كرسيه السماوات والارض ولا يؤوده حفظهما وهو العلي العظيم",
-    "al_baqarah_1": "الم ذلك الكتاب لا ريب فيه هدى للمتقين الذين يؤمنون بالغيب ويقيمون الصلاة ومما رزقناهم ينفقون والذين يؤمنون بما انزل اليك وما انزل من قبلك وبالاخرة هم يوقنون اولئك على هدى من ربهم واولئك هم المفلحون",
-}
-
-
-# ── Text content ──────────────────────────────────────────────────────────────
-ENGLISH_TEXTS = {
-    "pangrams": (
-        "The quick brown fox jumps over the lazy dog. "
-        "Pack my box with five dozen liquor jugs. "
-        "How vexingly quick daft zebras jump. "
-        "Sphinx of black quartz judge my vow. "
-        "The five boxing wizards jump quickly."
-    ),
-    "home_row": (
-        "asdf jkl; asdf jkl; add all fall hall sad fad lad "
-        "flask glad flag ask dash flash shall glass salad "
-        "false falls flask glass lads fads adds halls flasks "
-        "glad flags asks dashes flashes shalls glasses salads"
-    ),
-    "common_words": (
-        "the be to of and a in that have it for not on with he as you do at "
-        "this but his by from they we say her she or an will my one all would "
-        "there their what so up out if about who get which go me when make can "
-        "like time no just him know take people into year your good some could "
-        "them see other than then now look only come its over think also back "
-        "after use two how our work first well way even new want because any "
-        "these give day most us great between need large often hand high place "
-        "hold cause across air young gold long though open seem together next"
-    ),
+ARABIC_BUILTIN = {
+    "al_fatiha":          "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين اياك نعبد واياك نستعين اهدنا الصراط المستقيم صراط الذين انعمت عليهم غير المغضوب عليهم ولا الضالين",
+    "al_ikhlas":          "بسم الله الرحمن الرحيم قل هو الله احد الله الصمد لم يلد ولم يولد ولم يكن له كفوا احد",
+    "al_nas":             "بسم الله الرحمن الرحيم قل اعوذ برب الناس ملك الناس اله الناس من شر الوسواس الخناس الذي يوسوس في صدور الناس من الجنة والناس",
+    "al_falaq":           "بسم الله الرحمن الرحيم قل اعوذ برب الفلق من شر ما خلق ومن شر غاسق اذا وقب ومن شر النفاثات في العقد ومن شر حاسد اذا حسد",
+    "ayat_kursi":         "الله لا اله الا هو الحي القيوم لا تاخذه سنة ولا نوم له ما في السماوات وما في الارض من ذا الذي يشفع عنده الا باذنه يعلم ما بين ايديهم وما خلفهم ولا يحيطون بشيء من علمه الا بما شاء وسع كرسيه السماوات والارض ولا يؤوده حفظهما وهو العلي العظيم",
+    "al_baqarah_opening": "الم ذلك الكتاب لا ريب فيه هدى للمتقين الذين يؤمنون بالغيب ويقيمون الصلاة ومما رزقناهم ينفقون والذين يؤمنون بما انزل اليك وما انزل من قبلك وبالاخرة هم يوقنون",
+    "al_mulk":            "تبارك الذي بيده الملك وهو على كل شيء قدير الذي خلق الموت والحياة ليبلوكم ايكم احسن عملا وهو العزيز الغفور الذي خلق سبع سماوات طباقا",
+    "al_yasin":           "يس والقران الحكيم انك لمن المرسلين على صراط مستقيم تنزيل العزيز الرحيم لتنذر قوما ما انذر اباؤهم فهم غافلون",
+    "ar_rahman":          "الرحمن علم القران خلق الانسان علمه البيان الشمس والقمر بحسبان والنجم والشجر يسجدان والسماء رفعها ووضع الميزان",
 }
 
 RUSSIAN_TEXTS = {
-    "basics": (
-        "привет мир как дела хорошо спасибо пожалуйста "
-        "да нет может быть конечно понятно хорошо "
-        "доброе утро добрый день добрый вечер спокойной ночи "
-        "меня зовут рад познакомиться как вас зовут"
-    ),
-    "home_row": (
-        "фыва олдж фыва олдж фыва олдж фыва олдж "
-        "вол два жало дол лов фол жов вал "
-        "фол вол жол дол ало дал жал вал дав "
-        "ловля дольше жалоба овладеть давление"
-    ),
-    "pushkin": (
-        "я вас любил любовь ещё быть может "
-        "в душе моей угасла не совсем "
-        "но пусть она вас больше не тревожит "
-        "я не хочу печалить вас ничем "
-        "я вас любил безмолвно безнадежно "
-        "то робостью то ревностью томим "
-        "я вас любил так искренно так нежно "
-        "как дай вам бог любимой быть другим"
-    ),
-    "tolstoy": (
-        "все счастливые семьи похожи друг на друга "
-        "каждая несчастливая семья несчастлива по своему "
-        "все смешалось в доме облонских "
-        "жена узнала что муж был в связи "
-        "с бывшею в их доме француженкою гувернанткою "
-        "и объявила мужу что не может жить с ним в одном доме"
-    ),
+    "ru_home_row":       "фыва олдж фыва олдж фыва олдж вол два жало дол лов фол вол жол дол ало дал жал вал дав",
+    "ru_basics":         "привет мир как дела хорошо спасибо пожалуйста да нет может быть конечно понятно",
+    "ru_pushkin_vy":     "я вас любил любовь ещё быть может в душе моей угасла не совсем но пусть она вас больше не тревожит я не хочу печалить вас ничем я вас любил безмолвно безнадежно то робостью то ревностью томим я вас любил так искренно так нежно как дай вам бог любимой быть другим",
+    "ru_pushkin_onegin": "мой дядя самых честных правил когда не в шутку занемог он уважать себя заставил и лучше выдумать не мог его пример другим наука но боже мой какая скука с больным сидеть и день и ночь не отходя ни шагу прочь какое низкое коварство",
+    "ru_pushkin_medny":  "на берегу пустынных волн стоял он дум великих полн и вдаль глядел пред ним широко река неслася бедный чёлн по ней стремился одиноко по мшистым топким берегам чернели избы здесь и там приют убогого чухонца",
+    "ru_lermontov":      "выхожу один я на дорогу сквозь туман кремнистый путь блестит ночь тиха пустыня внемлет богу и звезда с звездою говорит в небесах торжественно и чудно спит земля в сиянье голубом что же мне так больно и так трудно жду ль чего жалею ли о чём",
+    "ru_tolstoy_anna":   "все счастливые семьи похожи друг на друга каждая несчастливая семья несчастлива по своему все смешалось в доме облонских жена узнала что муж был в связи с бывшею в их доме француженкою гувернанткою и объявила мужу что не может жить с ним в одном доме",
+    "ru_tolstoy_voina":  "что ж вам всё таки скучно в петербурге нет не скучно отвечала анна павловна но как вам угодно ну что такое сказала анна павловна она умела изречь банальную фразу с значительностью",
+    "ru_tolstoy_voskr":  "как ни старались люди собравшись в одно небольшое место несколько сот тысяч изуродовать ту землю на которой они жались как ни забивали камнями землю чтобы ничего не росло на ней",
+    "ru_dostoevsky_pre": "в начале июля в чрезвычайно жаркое время под вечер один молодой человек вышел из своей каморки которую нанимал от жильцов в с переулке на улицу и медленно нерешительно направился к к мосту",
+    "ru_dostoevsky_idi": "в конце ноября в оттепель часов в девять утра поезд петербургско-варшавской железной дороги на всех парах подходил к петербургу в такое сырое и туманное утро что с трудом можно было различить что-либо",
+    "ru_dostoevsky_bra": "алексей фёдорович карамазов был третьим сыном помещика нашего уезда фёдора павловича карамазова столь известного в своё время и до сих пор ещё у нас вспоминаемого по трагической и тёмной гибели своей",
+    "ru_chekhov_vishny": "вишнёвый сад продан сегодня весь вишнёвый сад и имение продано с торгов сегодня был аукцион продано лопахину аня купила варя и я пошли в поле а лопахин остался вчера я была на аукционе",
+    "ru_chekhov_dama":   "говорили что на набережной появилось новое лицо дама с собачкой дмитрий дмитрич гуров проживший в ялте уже две недели привыкший тут и тоже начавший интересоваться новыми лицами однажды утром увидел на набережной молодую женщину",
+    "ru_chekhov_palata": "в больничном дворе стоит небольшой флигель окружённый целым лесом репейника крапивы и дикой конопли флигель этот давно уже не служит своему прямому назначению крыша у него ржавая",
+    "ru_gogol_mertvye":  "в ворота гостиницы губернского города н н въехала довольно красивая рессорная небольшая бричка в какой ездят холостяки отставные подполковники штабс-капитаны помещики имеющие около сотни душ",
+    "ru_gogol_revizor":  "я пригласил вас господа с тем чтобы сообщить вам пренеприятное известие к нам едет ревизор антон антонович что вы как ревизор да ревизор из петербурга инкогнито и ещё с секретным предписанием",
+    "ru_bulgakov":       "однажды весною в час небывало жаркого заката в москве на патриарших прудах появились два гражданина первый из них приблизительно сорокалетний одетый в серенькую летнюю пару был маленького роста брюнет упитанный лысый",
+    "ru_turgenev":       "что аркадий николаич сказал николай петрович и усилил шаги ласково отвечал аркадий николай петрович взглянул на своего сына и вдруг что-то в нём защемило нет дело не в сыне заметил он про себя",
+    "ru_akhmatova":      "я научилась просто мудро жить смотреть на небо и молиться богу и долго перед вечером бродить чтоб утомить ненужную тревогу когда шуршат в овраге лопухи и никнет гроздь рябины желто-красной",
 }
 
-ARABIC_TEXTS = {
-    "al_fatiha": (
-        "بسم الله الرحمن الرحيم "
-        "الحمد لله رب العالمين "
-        "الرحمن الرحيم "
-        "مالك يوم الدين "
-        "اياك نعبد واياك نستعين "
-        "اهدنا الصراط المستقيم "
-        "صراط الذين انعمت عليهم "
-        "غير المغضوب عليهم ولا الضالين"
-    ),
-    "al_ikhlas": (
-        "بسم الله الرحمن الرحيم "
-        "قل هو الله احد "
-        "الله الصمد "
-        "لم يلد ولم يولد "
-        "ولم يكن له كفوا احد"
-    ),
-    "al_nas": (
-        "بسم الله الرحمن الرحيم "
-        "قل اعوذ برب الناس "
-        "ملك الناس "
-        "اله الناس "
-        "من شر الوسواس الخناس "
-        "الذي يوسوس في صدور الناس "
-        "من الجنة والناس"
-    ),
-    "al_falaq": (
-        "بسم الله الرحمن الرحيم "
-        "قل اعوذ برب الفلق "
-        "من شر ما خلق "
-        "ومن شر غاسق اذا وقب "
-        "ومن شر النفاثات في العقد "
-        "ومن شر حاسد اذا حسد"
-    ),
-    "al_baqarah_1": (
-        "الم ذلك الكتاب لا ريب فيه هدى للمتقين "
-        "الذين يؤمنون بالغيب ويقيمون الصلاة "
-        "ومما رزقناهم ينفقون "
-        "والذين يؤمنون بما انزل اليك "
-        "وما انزل من قبلك "
-        "وبالاخرة هم يوقنون "
-        "اولئك على هدى من ربهم "
-        "واولئك هم المفلحون"
-    ),
+ENGLISH_TEXTS = {
+    "Home Row Basics":   "asdf jkl; asdf jkl; add all fall hall sad fad lad flask glad flag ask dash flash shall glass salad false falls flask glass lads fads adds halls",
+    "Home Row Advanced": "asdf jkl; has had lad fad gash flash slash shall ash lash gal lag flag glad fad dad add all fall hall tall wall ball call stall install",
+    "Pangrams":          "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz judge my vow. The five boxing wizards jump quickly.",
+    "Common Words":      "the be to of and a in that have it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see",
+    "Programming":       "function variable return if else while for loop array string boolean integer float class object method import export const let async await promise callback event listener module package library algorithm recursive iteration",
+    "Famous Quotes":     "To be or not to be that is the question. It was the best of times it was the worst of times. All that glitters is not gold. Ask not what your country can do for you. I think therefore I am. Knowledge is power. The only way out is through.",
 }
 
-# Bhagavad Gita — key shlokas per chapter in Devanagari
+SANSKRIT_TRAINER = {
+    "sa_level_1_vowels":   "अ आ इ ई उ ऊ ऋ ए ऐ ओ औ",
+    "sa_level_2_ka":       "क ख ग घ ङ कक खख गग कग खघ गक घख",
+    "sa_level_3_ca":       "च छ ज झ ञ चज छझ कचगज",
+    "sa_level_4_ta":       "ट ठ ड ढ ण त थ द ध न टड थध",
+    "sa_level_5_pa":       "प फ ब भ म पब फभ मप",
+    "sa_level_6_semi":     "य र ल व श ष स ह",
+    "sa_level_7_matras":   "का कि की कु कू के कै को कौ रा री रे ना नि",
+    "sa_level_8_words":    "नमः धर्म कर्म योग भक्ति ज्ञान सत्य अहिंसा शान्ति",
+    "sa_level_9_phrases":  "नमस्ते सत्यमेव जयते अहं ब्रह्मास्मि ॐ शान्तिः",
+    "sa_level_10_gita":    "धर्म कर्म योग सत्य ज्ञान भक्ति मुक्ति शान्ति अर्जुन",
+}
+
 GITA = {
-    1: {
-        "name": "अर्जुन विषाद योग",
-        "name_en": "Arjuna Vishada Yoga — The Grief of Arjuna",
-        "verses": [
-            "धृतराष्ट्र उवाच धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः मामकाः पाण्डवाश्चैव किमकुर्वत सञ्जय",
-            "दृष्ट्वा तु पाण्डवानीकं व्यूढं दुर्योधनस्तदा आचार्यमुपसङ्गम्य राजा वचनमब्रवीत्",
-            "अर्जुन उवाच सेनयोरुभयोर्मध्ये रथं स्थापय मेऽच्युत यावदेतान्निरीक्षेऽहं योद्धुकामानवस्थितान्",
-        ]
-    },
-    2: {
-        "name": "सांख्य योग",
-        "name_en": "Sankhya Yoga — Transcendent Knowledge",
-        "verses": [
-            "श्रीभगवानुवाच कुतस्त्वा कश्मलमिदं विषमे समुपस्थितम् अनार्यजुष्टमस्वर्ग्यमकीर्तिकरमर्जुन",
-            "क्लैब्यं मा स्म गमः पार्थ नैतत्त्वय्युपपद्यते क्षुद्रं हृदयदौर्बल्यं त्यक्त्वोत्तिष्ठ परन्तप",
-            "नैनं छिन्दन्ति शस्त्राणि नैनं दहति पावकः न चैनं क्लेदयन्त्यापो न शोषयति मारुतः",
-            "अव्यक्तोऽयमचिन्त्योऽयमविकार्योऽयमुच्यते तस्मादेवं विदित्वैनं नानुशोचितुमर्हसि",
-            "नित्यस्य उक्तः शरीरस्य नान्तः क्षयोऽस्ति तस्मात्सर्वाणि भूतानि न त्वं शोचितुमर्हसि",
-        ]
-    },
-    3: {
-        "name": "कर्म योग",
-        "name_en": "Karma Yoga — The Yoga of Action",
-        "verses": [
-            "नियतं कुरु कर्म त्वं कर्म ज्यायो ह्यकर्मणः शरीरयात्रापि च ते न प्रसिद्ध्येदकर्मणः",
-            "यज्ञार्थात्कर्मणोऽन्यत्र लोकोऽयं कर्मबन्धनः तदर्थं कर्म कौन्तेय मुक्तसङ्गः समाचर",
-            "श्रेयान्स्वधर्मो विगुणः परधर्मात्स्वनुष्ठितात् स्वधर्मे निधनं श्रेयः परधर्मो भयावहः",
-        ]
-    },
-    4: {
-        "name": "ज्ञान कर्म संन्यास योग",
-        "name_en": "Jnana Karma Sanyasa Yoga — The Path of Knowledge",
-        "verses": [
-            "इमं विवस्वते योगं प्रोक्तवानहमव्ययम् विवस्वान्मनवे प्राह मनुरिक्ष्वाकवेऽब्रवीत्",
-            "यदा यदा हि धर्मस्य ग्लानिर्भवति भारत अभ्युत्थानमधर्मस्य तदात्मानं सृजाम्यहम्",
-            "परित्राणाय साधूनां विनाशाय च दुष्कृताम् धर्मसंस्थापनार्थाय सम्भवामि युगे युगे",
-        ]
-    },
-    5: {
-        "name": "कर्म संन्यास योग",
-        "name_en": "Karma Sanyasa Yoga — Renunciation of Action",
-        "verses": [
-            "सर्वकर्माणि मनसा संन्यस्यास्ते सुखं वशी नवद्वारे पुरे देही नैव कुर्वन्न कारयन्",
-            "ब्रह्मण्याधाय कर्माणि सङ्गं त्यक्त्वा करोति यः लिप्यते न स पापेन पद्मपत्रमिवाम्भसा",
-        ]
-    },
-    6: {
-        "name": "ध्यान योग",
-        "name_en": "Dhyana Yoga — Meditation",
-        "verses": [
-            "उद्धरेदात्मनात्मानं नात्मानमवसादयेत् आत्मैव ह्यात्मनो बन्धुरात्मैव रिपुरात्मनः",
-            "बन्धुरात्मात्मनस्तस्य येनात्मैवात्मना जितः अनात्मनस्तु शत्रुत्वे वर्तेतात्मैव शत्रुवत्",
-            "योगस्थः कुरु कर्माणि सङ्गं त्यक्त्वा धनञ्जय सिद्ध्यसिद्ध्योः समो भूत्वा समत्वं योग उच्यते",
-        ]
-    },
-    7: {
-        "name": "ज्ञान विज्ञान योग",
-        "name_en": "Jnana Vijnana Yoga — Knowledge and Wisdom",
-        "verses": [
-            "मनुष्याणां सहस्रेषु कश्चिद्यतति सिद्धये यततामपि सिद्धानां कश्चिन्मां वेत्ति तत्त्वतः",
-            "भूमिरापोऽनलो वायुः खं मनो बुद्धिरेव च अहङ्कार इतीयं मे भिन्ना प्रकृतिरष्टधा",
-        ]
-    },
-    8: {
-        "name": "अक्षर ब्रह्म योग",
-        "name_en": "Aksara Brahma Yoga — The Eternal Godhead",
-        "verses": [
-            "अन्तकाले च मामेव स्मरन्मुक्त्वा कलेवरम् यः प्रयाति स मद्भावं याति नास्त्यत्र संशयः",
-        ]
-    },
-    9: {
-        "name": "राज विद्या योग",
-        "name_en": "Raja Vidya Yoga — The Royal Path",
-        "verses": [
-            "पत्रं पुष्पं फलं तोयं यो मे भक्त्या प्रयच्छति तदहं भक्त्युपहृतमश्नामि प्रयतात्मनः",
-            "यत्करोषि यदश्नासि यज्जुहोषि ददासि यत् यत्तपस्यसि कौन्तेय तत्कुरुष्व मदर्पणम्",
-        ]
-    },
-    10: {
-        "name": "विभूति योग",
-        "name_en": "Vibhuti Yoga — Divine Manifestations",
-        "verses": [
-            "अहमात्मा गुडाकेश सर्वभूताशयस्थितः अहमादिश्च मध्यं च भूतानामन्त एव च",
-        ]
-    },
-    11: {
-        "name": "विश्वरूप दर्शन योग",
-        "name_en": "Vishwarupa Darshana Yoga — The Cosmic Vision",
-        "verses": [
-            "अर्जुन उवाच मदनुग्रहाय परमं गुह्यमध्यात्मसञ्ज्ञितम् यत्त्वयोक्तं वचस्तेन मोहोऽयं विगतो मम",
-            "दिव्यमाल्याम्बरधरं दिव्यगन्धानुलेपनम् सर्वाश्चर्यमयं देवमनन्तं विश्वतोमुखम्",
-        ]
-    },
-    12: {
-        "name": "भक्ति योग",
-        "name_en": "Bhakti Yoga — The Path of Devotion",
-        "verses": [
-            "मय्येव मन आधत्स्व मयि बुद्धिं निवेशय निवसिष्यसि मय्येव अत ऊर्ध्वं न संशयः",
-            "अद्वेष्टा सर्वभूतानां मैत्रः करुण एव च निर्ममो निरहङ्कारः समदुःखसुखः क्षमी",
-        ]
-    },
-    13: {
-        "name": "क्षेत्र क्षेत्रज्ञ योग",
-        "name_en": "Kshetra Kshetragya Yoga — The Field and Its Knower",
-        "verses": [
-            "इदं शरीरं कौन्तेय क्षेत्रमित्यभिधीयते एतद्यो वेत्ति तं प्राहुः क्षेत्रज्ञ इति तद्विदः",
-        ]
-    },
-    14: {
-        "name": "गुणत्रय विभाग योग",
-        "name_en": "Gunatraya Vibhaga Yoga — The Three Qualities",
-        "verses": [
-            "सत्त्वं रजस्तम इति गुणाः प्रकृतिसम्भवाः निबध्नन्ति महाबाहो देहे देहिनमव्ययम्",
-        ]
-    },
-    15: {
-        "name": "पुरुषोत्तम योग",
-        "name_en": "Purushottama Yoga — The Supreme Being",
-        "verses": [
-            "ऊर्ध्वमूलमधःशाखमश्वत्थं प्राहुरव्ययम् छन्दांसि यस्य पर्णानि यस्तं वेद स वेदवित्",
-        ]
-    },
-    16: {
-        "name": "दैवासुर सम्पद् विभाग योग",
-        "name_en": "Daivasura Sampad Vibhaga Yoga — Divine and Demonic",
-        "verses": [
-            "अभयं सत्त्वसंशुद्धिर्ज्ञानयोगव्यवस्थितिः दानं दमश्च यज्ञश्च स्वाध्यायस्तप आर्जवम्",
-        ]
-    },
-    17: {
-        "name": "श्रद्धात्रय विभाग योग",
-        "name_en": "Shraddhatraya Vibhaga Yoga — Three Kinds of Faith",
-        "verses": [
-            "त्रिविधा भवति श्रद्धा देहिनां सा स्वभावजा सात्त्विकी राजसी चैव तामसी चेति तां शृणु",
-        ]
-    },
-    18: {
-        "name": "मोक्ष संन्यास योग",
-        "name_en": "Moksha Sanyasa Yoga — Liberation through Renunciation",
-        "verses": [
-            "सर्वधर्मान्परित्यज्य मामेकं शरणं व्रज अहं त्वां सर्वपापेभ्यो मोक्षयिष्यामि मा शुचः",
-            "इदं ते नातपस्काय नाभक्ताय कदाचन न चाशुश्रूषवे वाच्यं न च मां योऽभ्यसूयति",
-            "य इमं परमं गुह्यं मद्भक्तेष्वभिधास्यति भक्तिं मयि परां कृत्वा मामेवैष्यत्यसंशयः",
-        ]
-    },
-}
-
-# Sanskrit home row levels — Devanagari touch typing trainer
-SANSKRIT_LEVELS = {
-    "level1": {
-        "name": "Level 1 — Home Row Core (क ख ग घ)",
-        "desc": "Start with the four most common consonants on home row",
-        "words": ["क", "ख", "ग", "घ", "कक", "खख", "गग", "घघ",
-                  "कग", "खघ", "गक", "घख", "कखगघ", "घगखक",
-                  "कग कग", "खघ खघ", "गक गक", "घख घख"],
-    },
-    "level2": {
-        "name": "Level 2 — Consonants Row 1 (च छ ज झ)",
-        "desc": "Next four consonants, building muscle memory",
-        "words": ["च", "छ", "ज", "झ", "चच", "छछ", "जज", "झझ",
-                  "चज", "छझ", "जच", "झछ", "कचगज", "खछघझ"],
-    },
-    "level3": {
-        "name": "Level 3 — Top Row (ट ठ ड ढ ण)",
-        "desc": "Retroflex consonants — reach up",
-        "words": ["ट", "ठ", "ड", "ढ", "ण", "टठ", "डढ",
-                  "टड", "ठढ", "णट", "कटचड", "गठजढ"],
-    },
-    "level4": {
-        "name": "Level 4 — Dentals (त थ द ध न)",
-        "desc": "The dental consonants",
-        "words": ["त", "थ", "द", "ध", "न", "तत", "थथ", "दद", "धध", "नन",
-                  "तद", "थध", "दत", "धथ", "नत", "तथदधन"],
-    },
-    "level5": {
-        "name": "Level 5 — Labials (प फ ब भ म)",
-        "desc": "Labial consonants",
-        "words": ["प", "फ", "ब", "भ", "म", "पप", "फफ", "बब", "भभ", "मम",
-                  "पब", "फभ", "बप", "भफ", "मप", "पफबभम"],
-    },
-    "level6": {
-        "name": "Level 6 — Semi-vowels (य र ल व)",
-        "desc": "Semi-vowels and liquid consonants",
-        "words": ["य", "र", "ल", "व", "यय", "रर", "लल", "वव",
-                  "यर", "लव", "रय", "वल", "यरलव", "वलरय"],
-    },
-    "level7": {
-        "name": "Level 7 — Sibilants & Aspirate (श ष स ह)",
-        "desc": "Sibilants and aspirate",
-        "words": ["श", "ष", "स", "ह", "शश", "षष", "सस", "हह",
-                  "शस", "षह", "सश", "हष", "कशगस", "खषघह"],
-    },
-    "level8": {
-        "name": "Level 8 — Vowels (अ आ इ ई)",
-        "desc": "The primary vowels",
-        "words": ["अ", "आ", "इ", "ई", "अआ", "इई", "अइ", "आई",
-                  "अक", "आख", "इग", "ईघ", "कअ", "खआ", "गइ", "घई"],
-    },
-    "level9": {
-        "name": "Level 9 — More Vowels (उ ऊ ए ऐ ओ औ)",
-        "desc": "Remaining vowels",
-        "words": ["उ", "ऊ", "ए", "ऐ", "ओ", "औ",
-                  "उऊ", "एऐ", "ओऔ", "अउ", "आऊ", "इए", "ईऐ",
-                  "कु", "खू", "गे", "घै", "चो", "छौ"],
-    },
-    "level10": {
-        "name": "Level 10 — Vowel Marks (Matras)",
-        "desc": "Practice vowel combining marks",
-        "words": ["का", "कि", "की", "कु", "कू", "के", "कै", "को", "कौ",
-                  "रा", "री", "रु", "रे", "रो", "ना", "नि", "नु", "ने",
-                  "मा", "मि", "मु", "मे", "मो"],
-    },
-    "level11": {
-        "name": "Level 11 — Common Words",
-        "desc": "Basic Sanskrit vocabulary",
-        "words": ["नमः", "धर्म", "कर्म", "योग", "भक्ति", "ज्ञान",
-                  "सत्य", "अहिंसा", "शान्ति", "आनन्द", "प्रेम",
-                  "गुरु", "शिष्य", "वेद", "गीता", "श्लोक"],
-    },
-    "level12": {
-        "name": "Level 12 — Full Sentences",
-        "desc": "Complete Sanskrit phrases",
-        "words": ["नमस्ते", "सत्यमेव जयते", "अहं ब्रह्मास्मि",
-                  "तत्त्वमसि", "सर्वे भवन्तु सुखिनः",
-                  "ॐ शान्तिः शान्तिः शान्तिः"],
-    },
+    1:{"name_en":"Arjuna Vishada Yoga","verses":["धृतराष्ट्र उवाच धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः मामकाः पाण्डवाश्चैव किमकुर्वत सञ्जय","सञ्जय उवाच दृष्ट्वा तु पाण्डवानीकं व्यूढं दुर्योधनस्तदा आचार्यमुपसङ्गम्य राजा वचनमब्रवीत्"]},
+    2:{"name_en":"Sankhya Yoga","verses":["श्रीभगवानुवाच कुतस्त्वा कश्मलमिदं विषमे समुपस्थितम्","नैनं छिन्दन्ति शस्त्राणि नैनं दहति पावकः न चैनं क्लेदयन्त्यापो न शोषयति मारुतः","अव्यक्तोऽयमचिन्त्योऽयमविकार्योऽयमुच्यते तस्मादेवं विदित्वैनं नानुशोचितुमर्हसि","क्लैब्यं मा स्म गमः पार्थ नैतत्त्वय्युपपद्यते क्षुद्रं हृदयदौर्बल्यं त्यक्त्वोत्तिष्ठ परन्तप"]},
+    3:{"name_en":"Karma Yoga","verses":["नियतं कुरु कर्म त्वं कर्म ज्यायो ह्यकर्मणः","यज्ञार्थात्कर्मणोऽन्यत्र लोकोऽयं कर्मबन्धनः तदर्थं कर्म कौन्तेय मुक्तसङ्गः समाचर","श्रेयान्स्वधर्मो विगुणः परधर्मात्स्वनुष्ठितात् स्वधर्मे निधनं श्रेयः परधर्मो भयावहः"]},
+    4:{"name_en":"Jnana Karma Sanyasa Yoga","verses":["यदा यदा हि धर्मस्य ग्लानिर्भवति भारत अभ्युत्थानमधर्मस्य तदात्मानं सृजाम्यहम्","परित्राणाय साधूनां विनाशाय च दुष्कृताम् धर्मसंस्थापनार्थाय सम्भवामि युगे युगे"]},
+    5:{"name_en":"Karma Sanyasa Yoga","verses":["सर्वकर्माणि मनसा संन्यस्यास्ते सुखं वशी नवद्वारे पुरे देही नैव कुर्वन्न कारयन्"]},
+    6:{"name_en":"Dhyana Yoga","verses":["उद्धरेदात्मनात्मानं नात्मानमवसादयेत् आत्मैव ह्यात्मनो बन्धुरात्मैव रिपुरात्मनः","योगस्थः कुरु कर्माणि सङ्गं त्यक्त्वा धनञ्जय सिद्ध्यसिद्ध्योः समो भूत्वा समत्वं योग उच्यते"]},
+    7:{"name_en":"Jnana Vijnana Yoga","verses":["मनुष्याणां सहस्रेषु कश्चिद्यतति सिद्धये यततामपि सिद्धानां कश्चिन्मां वेत्ति तत्त्वतः"]},
+    8:{"name_en":"Aksara Brahma Yoga","verses":["अन्तकाले च मामेव स्मरन्मुक्त्वा कलेवरम् यः प्रयाति स मद्भावं याति नास्त्यत्र संशयः"]},
+    9:{"name_en":"Raja Vidya Yoga","verses":["पत्रं पुष्पं फलं तोयं यो मे भक्त्या प्रयच्छति तदहं भक्त्युपहृतमश्नामि प्रयतात्मनः","यत्करोषि यदश्नासि यज्जुहोषि ददासि यत् यत्तपस्यसि कौन्तेय तत्कुरुष्व मदर्पणम्"]},
+    10:{"name_en":"Vibhuti Yoga","verses":["अहमात्मा गुडाकेश सर्वभूताशयस्थितः अहमादिश्च मध्यं च भूतानामन्त एव च"]},
+    11:{"name_en":"Vishwarupa Darshana Yoga","verses":["दिव्यमाल्याम्बरधरं दिव्यगन्धानुलेपनम् सर्वाश्चर्यमयं देवमनन्तं विश्वतोमुखम्"]},
+    12:{"name_en":"Bhakti Yoga","verses":["मय्येव मन आधत्स्व मयि बुद्धिं निवेशय निवसिष्यसि मय्येव अत ऊर्ध्वं न संशयः","अद्वेष्टा सर्वभूतानां मैत्रः करुण एव च निर्ममो निरहङ्कारः समदुःखसुखः क्षमी"]},
+    13:{"name_en":"Kshetra Kshetragya Yoga","verses":["इदं शरीरं कौन्तेय क्षेत्रमित्यभिधीयते एतद्यो वेत्ति तं प्राहुः क्षेत्रज्ञ इति तद्विदः"]},
+    14:{"name_en":"Gunatraya Vibhaga Yoga","verses":["सत्त्वं रजस्तम इति गुणाः प्रकृतिसम्भवाः निबध्नन्ति महाबाहो देहे देहिनमव्ययम्"]},
+    15:{"name_en":"Purushottama Yoga","verses":["ऊर्ध्वमूलमधःशाखमश्वत्थं प्राहुरव्ययम् छन्दांसि यस्य पर्णानि यस्तं वेद स वेदवित्"]},
+    16:{"name_en":"Daivasura Sampad Vibhaga Yoga","verses":["अभयं सत्त्वसंशुद्धिर्ज्ञानयोगव्यवस्थितिः दानं दमश्च यज्ञश्च स्वाध्यायस्तप आर्जवम्"]},
+    17:{"name_en":"Shraddhatraya Vibhaga Yoga","verses":["त्रिविधा भवति श्रद्धा देहिनां सा स्वभावजा सात्त्विकी राजसी चैव तामसी चेति तां शृणु"]},
+    18:{"name_en":"Moksha Sanyasa Yoga","verses":["सर्वधर्मान्परित्यज्य मामेकं शरणं व्रज अहं त्वां सर्वपापेभ्यो मोक्षयिष्यामि मा शुचः","य इमं परमं गुह्यं मद्भक्तेष्वभिधास्यति भक्तिं मयि परां कृत्वा मामेवैष्यत्यसंशयः"]},
 }
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-
-def _fetch_surah(n: int) -> str:
-    """Fetch surah text from alquran.cloud API."""
-    try:
-        url = f"https://api.alquran.cloud/v1/surah/{n}"
-        req = Request(url, headers={"User-Agent":"UltimateTyper/2.0","Accept":"application/json"})
-        from urllib.request import urlopen
-        data = json.loads(urlopen(req, timeout=12).read().decode())
-        if data.get("code") == 200:
-            return " ".join(a["text"] for a in data["data"]["ayahs"])
-    except:
-        pass
-    return ""
-
 @app.route('/api/languages')
 def get_languages():
+    rdy = sum(1 for t in GUTENBERG if _bpath(t).exists() and _bpath(t).stat().st_size>2000)
     return jsonify([
-        {"id": "english",  "name": "English",  "flag": "🇬🇧", "dir": "ltr",
-         "script": "Latin", "desc": "Pangrams · Home row · Common words"},
-        {"id": "russian",  "name": "Русский",  "flag": "🇷🇺", "dir": "ltr",
-         "script": "Cyrillic", "desc": "Basics · Pushkin · Tolstoy"},
-        {"id": "arabic",   "name": "العربية",   "flag": "🕌", "dir": "rtl",
-         "script": "Arabic", "desc": "Quran — Al-Fatiha · Al-Ikhlas · An-Nas · Al-Falaq"},
-        {"id": "sanskrit", "name": "संस्कृतम्", "flag": "🕉️",  "dir": "ltr",
-         "script": "Devanagari", "desc": "Bhagavad Gita · Home Row Trainer"},
+        {"id":"english","name":"English","flag":"🇬🇧","dir":"ltr",
+         "desc":f"{len(ENGLISH_TEXTS)} built-in + {rdy}/{len(GUTENBERG)} books ready"},
+        {"id":"russian","name":"Русский","flag":"🇷🇺","dir":"ltr",
+         "desc":f"{len(RUSSIAN_TEXTS)} texts — Pushkin · Tolstoy · Dostoevsky · Chekhov · Bulgakov"},
+        {"id":"arabic","name":"العربية","flag":"🕌","dir":"rtl",
+         "desc":f"114 Surahs · {len(ARABIC_BUILTIN)} always available"},
+        {"id":"sanskrit","name":"संस्कृतम्","flag":"🕉️","dir":"ltr",
+         "desc":f"Bhagavad Gita 18 chapters · {len(SANSKRIT_TRAINER)}-level trainer"},
     ])
 
 @app.route('/api/prompts/<lang>')
 def get_prompts(lang):
-    if lang == "english":
-        return jsonify([
-            {"id": "pangrams",     "name": "Pangrams",         "type": "text",    "words": None},
-            {"id": "home_row",     "name": "Home Row Drill",   "type": "trainer", "words": None},
-            {"id": "common_words", "name": "1000 Common Words","type": "text",    "words": None},
-        ])
-    if lang == "russian":
-        return jsonify([
-            {"id": "basics",   "name": "Basics & Greetings",    "type": "text",    "words": None},
-            {"id": "home_row", "name": "Home Row (ФЫВА ОЛДЖ)",  "type": "trainer", "words": None},
-            {"id": "pushkin",  "name": "Pushkin — Я вас любил", "type": "literature", "words": None},
-            {"id": "tolstoy",  "name": "Tolstoy — Anna Karenina","type": "literature","words": None},
-        ])
-    if lang == "arabic":
-        prompts = [
-            {"id": "al_fatiha",    "name": "001. الفاتحة — Al-Fatiha (built-in)",    "type": "quran", "desc": "7 ayahs"},
-            {"id": "al_ikhlas",    "name": "112. الإخلاص — Al-Ikhlas (built-in)",   "type": "quran", "desc": "4 ayahs"},
-            {"id": "al_nas",       "name": "114. الناس — An-Nas (built-in)",         "type": "quran", "desc": "6 ayahs"},
-            {"id": "al_falaq",     "name": "113. الفلق — Al-Falaq (built-in)",       "type": "quran", "desc": "5 ayahs"},
-            {"id": "ayat_kursi",   "name": "آية الكرسي — Ayat Al-Kursi (built-in)", "type": "quran", "desc": "1 ayah"},
-            {"id": "al_baqarah_1", "name": "002. البقرة — Al-Baqarah opening",       "type": "quran", "desc": "built-in"},
+    if lang=="english":
+        out=[]
+        for name in ENGLISH_TEXTS:
+            out.append({"id":f"en_{re.sub(r'[^\\w]','_',name)}","name":name,"type":"text","author":"Built-in"})
+        for title,(gid,auth) in sorted(GUTENBERG.items(),key=lambda x:(x[1][1],x[0])):
+            p=_bpath(title); rdy=p.exists() and p.stat().st_size>2000
+            out.append({"id":f"book_{re.sub(r'[^\\w]','_',title)[:40]}","name":title,
+                        "type":"book","author":auth,"desc":"✓ ready" if rdy else "↓ loading..."})
+        return jsonify(out)
+
+    if lang=="russian":
+        names={
+            "ru_home_row":"Домашний ряд — ФЫВА ОЛДЖ","ru_basics":"Основы — приветствия",
+            "ru_pushkin_vy":"Пушкин — Я вас любил","ru_pushkin_onegin":"Пушкин — Евгений Онегин",
+            "ru_pushkin_medny":"Пушкин — Медный всадник","ru_lermontov":"Лермонтов — Выхожу один",
+            "ru_tolstoy_anna":"Толстой — Анна Каренина","ru_tolstoy_voina":"Толстой — Война и мир",
+            "ru_tolstoy_voskr":"Толстой — Воскресение",
+            "ru_dostoevsky_pre":"Достоевский — Преступление и наказание",
+            "ru_dostoevsky_idi":"Достоевский — Идиот","ru_dostoevsky_bra":"Достоевский — Братья Карамазовы",
+            "ru_chekhov_vishny":"Чехов — Вишнёвый сад","ru_chekhov_dama":"Чехов — Дама с собачкой",
+            "ru_chekhov_palata":"Чехов — Палата №6","ru_gogol_mertvye":"Гоголь — Мёртвые души",
+            "ru_gogol_revizor":"Гоголь — Ревизор","ru_bulgakov":"Булгаков — Мастер и Маргарита",
+            "ru_turgenev":"Тургенев — Отцы и дети","ru_akhmatova":"Ахматова — стихи",
+        }
+        return jsonify([{"id":k,"name":names.get(k,k),"type":"text"}
+                        for k in RUSSIAN_TEXTS])
+
+    if lang=="arabic":
+        out=[
+            {"id":"al_fatiha","name":"001. الفاتحة — Al-Fatiha","type":"quran","desc":"built-in"},
+            {"id":"al_ikhlas","name":"112. الإخلاص — Al-Ikhlas","type":"quran","desc":"built-in"},
+            {"id":"al_nas","name":"114. الناس — An-Nas","type":"quran","desc":"built-in"},
+            {"id":"al_falaq","name":"113. الفلق — Al-Falaq","type":"quran","desc":"built-in"},
+            {"id":"ayat_kursi","name":"آية الكرسي — Ayat Al-Kursi","type":"quran","desc":"built-in"},
+            {"id":"al_baqarah_opening","name":"002. البقرة — Al-Baqarah opening","type":"quran","desc":"built-in"},
+            {"id":"al_mulk","name":"067. الملك — Al-Mulk","type":"quran","desc":"built-in"},
+            {"id":"al_yasin","name":"036. يس — Ya-Sin","type":"quran","desc":"built-in"},
+            {"id":"ar_rahman","name":"055. الرحمن — Ar-Rahman","type":"quran","desc":"built-in"},
         ]
-        for (n, name_ar, name_en, ayahs) in SURAHS:
-            prompts.append({
-                "id":   f"surah_{n}",
-                "name": f"{n:03d}. {name_ar} — {name_en}",
-                "type": "quran",
-                "desc": f"{ayahs} ayahs",
-            })
-        return jsonify(prompts)
-    if lang == "sanskrit":
-        prompts = []
-        # Home row trainer levels
-        for lid, lvl in SANSKRIT_LEVELS.items():
-            prompts.append({"id": f"train_{lid}", "name": lvl["name"],
-                            "type": "trainer", "desc": lvl["desc"]})
-        # Gita chapters
-        prompts.append({"id": "gita_all", "name": "भगवद्गीता — All 18 Chapters",
-                        "type": "gita", "desc": "Complete Bhagavad Gita"})
-        for ch, data in GITA.items():
-            prompts.append({
-                "id":   f"gita_{ch}",
-                "name": f"Ch.{ch} — {data['name_en']}",
-                "type": "gita",
-                "desc": data['name'],
-            })
-        # Multi-chapter ranges
-        prompts.append({"id": "gita_1_6",  "name": "Gita Chapters 1–6 (Karma Kanda)",
-                        "type": "gita", "desc": "Action and Duty"})
-        prompts.append({"id": "gita_7_12", "name": "Gita Chapters 7–12 (Bhakti Kanda)",
-                        "type": "gita", "desc": "Devotion and Knowledge"})
-        prompts.append({"id": "gita_13_18","name": "Gita Chapters 13–18 (Jnana Kanda)",
-                        "type": "gita", "desc": "Liberation"})
-        return jsonify(prompts)
+        for (n,na,ne,ay) in SURAHS:
+            out.append({"id":f"surah_{n}","name":f"{n:03d}. {na} — {ne}","type":"quran","desc":f"{ay} ayahs"})
+        return jsonify(out)
+
+    if lang=="sanskrit":
+        lvl_names={
+            "sa_level_1_vowels":"Level 1 — Vowels (अ आ इ ई)",
+            "sa_level_2_ka":"Level 2 — Ka group (क ख ग घ)",
+            "sa_level_3_ca":"Level 3 — Ca group (च छ ज झ)",
+            "sa_level_4_ta":"Level 4 — Ta/Da group (ट ठ ड ढ ण)",
+            "sa_level_5_pa":"Level 5 — Pa group (प फ ब भ म)",
+            "sa_level_6_semi":"Level 6 — Semi-vowels (य र ल व)",
+            "sa_level_7_matras":"Level 7 — Vowel marks (का कि की)",
+            "sa_level_8_words":"Level 8 — Sanskrit words",
+            "sa_level_9_phrases":"Level 9 — Sanskrit phrases",
+            "sa_level_10_gita":"Level 10 — Gita vocabulary",
+        }
+        out=[{"id":k,"name":lvl_names.get(k,k),"type":"trainer"} for k in SANSKRIT_TRAINER]
+        out.append({"id":"gita_all","name":"Bhagavad Gita — Complete (18 Chapters)","type":"gita"})
+        out.append({"id":"gita_1_6","name":"Gita Ch.1–6 — Karma Kanda","type":"gita"})
+        out.append({"id":"gita_7_12","name":"Gita Ch.7–12 — Bhakti Kanda","type":"gita"})
+        out.append({"id":"gita_13_18","name":"Gita Ch.13–18 — Jnana Kanda","type":"gita"})
+        for ch,d in GITA.items():
+            out.append({"id":f"gita_{ch}","name":f"Ch.{ch:02d} — {d['name_en']}","type":"gita",
+                        "desc":f"{len(d['verses'])} shlokas"})
+        return jsonify(out)
     return jsonify([])
 
 @app.route('/api/words', methods=['POST'])
 def get_words():
-    data      = request.json or {}
-    lang      = data.get('lang', 'english')
-    prompt_id = data.get('prompt_id', '')
+    d=request.json or {}; lang=d.get('lang','english'); pid=d.get('prompt_id','')
+    words=[]; direction='ltr'
 
-    words = []
-    direction = 'ltr'
-
-    if lang == 'english':
-        raw = ENGLISH_TEXTS.get(prompt_id, ENGLISH_TEXTS['pangrams'])
-        words = raw.split()
-
-    elif lang == 'russian':
-        raw = RUSSIAN_TEXTS.get(prompt_id, RUSSIAN_TEXTS['basics'])
-        words = raw.split()
-
-    elif lang == 'arabic':
-        direction = 'rtl'
-        pid = prompt_id
-        if pid.startswith('surah_'):
-            try:
-                n = int(pid[6:])
-                raw = _fetch_surah(n) or ARABIC_TEXTS.get('al_fatiha','')
-            except:
-                raw = ARABIC_TEXTS.get('al_fatiha', '')
-        elif pid in ARABIC_EXTRA:
-            raw = ARABIC_EXTRA[pid]
+    if lang=='english':
+        if pid.startswith('book_'):
+            bkey=pid[5:]
+            for title,(gid,auth) in GUTENBERG.items():
+                if re.sub(r'[^\w]','_',title)[:40]==bkey:
+                    p=_bpath(title)
+                    if not (p.exists() and p.stat().st_size>2000): _dl_book(title,gid)
+                    try: words=p.read_text(encoding='utf-8').split()[:3000]
+                    except: pass
+                    break
+            if not words: words=list(ENGLISH_TEXTS.values())[0].split()
         else:
-            raw = ARABIC_TEXTS.get(pid, ARABIC_TEXTS.get('al_fatiha', ''))
-        raw   = _RE_DIAC.sub('', raw)
-        words = [deep_norm_ar(w) for w in raw.split() if w]
+            name=pid[3:].replace('_',' ')
+            text=ENGLISH_TEXTS.get(name,list(ENGLISH_TEXTS.values())[0])
+            words=text.split()
 
-    elif lang == 'sanskrit':
-        if prompt_id.startswith('train_'):
-            level_id = prompt_id[6:]   # strip 'train_'
-            lvl = SANSKRIT_LEVELS.get(level_id, SANSKRIT_LEVELS['level1'])
-            # Expand word list for training (repeat + shuffle)
-            base = lvl['words'] * 6
-            import random; random.shuffle(base)
-            words = base[:60]
-        elif prompt_id == 'gita_all':
-            verses = []
-            for ch in GITA.values():
-                verses.extend(ch['verses'])
-            words = ' '.join(verses).split()
-        elif prompt_id == 'gita_1_6':
-            verses = []
-            for ch in range(1, 7):
-                verses.extend(GITA[ch]['verses'])
-            words = ' '.join(verses).split()
-        elif prompt_id == 'gita_7_12':
-            verses = []
-            for ch in range(7, 13):
-                verses.extend(GITA[ch]['verses'])
-            words = ' '.join(verses).split()
-        elif prompt_id == 'gita_13_18':
-            verses = []
-            for ch in range(13, 19):
-                verses.extend(GITA[ch]['verses'])
-            words = ' '.join(verses).split()
-        elif prompt_id.startswith('gita_'):
-            try:
-                ch_num = int(prompt_id[5:])
-                ch = GITA.get(ch_num, GITA[1])
-                words = ' '.join(ch['verses']).split()
-            except (ValueError, KeyError):
-                words = ' '.join(GITA[1]['verses']).split()
-        else:
-            lvl = SANSKRIT_LEVELS['level1']
-            words = lvl['words'] * 6
+    elif lang=='russian':
+        text=RUSSIAN_TEXTS.get(pid,list(RUSSIAN_TEXTS.values())[0]); words=text.split()
 
-    return jsonify({"lang": lang, "words": words, "dir": direction})
+    elif lang=='arabic':
+        direction='rtl'
+        if pid in ARABIC_BUILTIN: raw=ARABIC_BUILTIN[pid]
+        elif pid.startswith('surah_'):
+            try: raw=_fetch_surah(int(pid[6:])) or ARABIC_BUILTIN['al_fatiha']
+            except: raw=ARABIC_BUILTIN['al_fatiha']
+        else: raw=ARABIC_BUILTIN.get(pid,ARABIC_BUILTIN['al_fatiha'])
+        raw=_RE_DIAC.sub('',raw); words=[deep_norm_ar(w) for w in raw.split() if w]
+
+    elif lang=='sanskrit':
+        if pid.startswith('sa_level'):
+            raw=SANSKRIT_TRAINER.get(pid,list(SANSKRIT_TRAINER.values())[0])
+            words=(raw.split()*8)[:60]
+        elif pid=='gita_all': words=' '.join(v for c in GITA.values() for v in c['verses']).split()
+        elif pid=='gita_1_6': words=' '.join(v for i in range(1,7) for v in GITA[i]['verses']).split()
+        elif pid=='gita_7_12': words=' '.join(v for i in range(7,13) for v in GITA[i]['verses']).split()
+        elif pid=='gita_13_18': words=' '.join(v for i in range(13,19) for v in GITA[i]['verses']).split()
+        elif pid.startswith('gita_'):
+            try: words=' '.join(GITA[int(pid[5:])]['verses']).split()
+            except: words=' '.join(GITA[1]['verses']).split()
+        else: words=(list(SANSKRIT_TRAINER.values())[0].split()*8)[:60]
+
+    return jsonify({"lang":lang,"words":words,"dir":direction})
+
+def _fetch_surah(n):
+    try:
+        url=f"https://api.alquran.cloud/v1/surah/{n}"
+        data=json.loads(urlopen(Request(url,headers={"User-Agent":"UltimateTyper/3.0"}),timeout=12).read().decode())
+        if data.get("code")==200: return " ".join(a["text"] for a in data["data"]["ayahs"])
+    except: pass
+    return ""
 
 @app.route('/api/session', methods=['POST'])
 def save_session():
-    d  = request.json or {}
-    db = get_db()
-    db.execute(
-        "INSERT INTO sessions (username,language,prompt_name,wpm,avg_wpm,"
-        "accuracy,chars_typed,words_typed,errors,duration) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (d.get('username','anonymous'), d.get('lang',''), d.get('prompt_name',''),
-         d.get('wpm',0), d.get('avg_wpm',0), d.get('accuracy',100),
-         d.get('chars_typed',0), d.get('words_typed',0),
-         d.get('errors',0), d.get('duration',0))
-    )
-    db.commit()
-    return jsonify({"ok": True})
+    d=request.json or {}; db=get_db()
+    db.execute("INSERT INTO sessions (username,language,prompt_name,wpm,avg_wpm,accuracy,"
+               "chars_typed,words_typed,errors,duration) VALUES (?,?,?,?,?,?,?,?,?,?)",
+               (d.get('username','anonymous'),d.get('lang',''),d.get('prompt_name',''),
+                d.get('wpm',0),d.get('avg_wpm',0),d.get('accuracy',100),
+                d.get('chars_typed',0),d.get('words_typed',0),d.get('errors',0),d.get('duration',0)))
+    db.commit(); return jsonify({"ok":True})
 
 @app.route('/api/stats/<lang>')
 def get_stats(lang):
-    db   = get_db()
-    rows = db.execute(
-        "SELECT wpm,avg_wpm,accuracy,words_typed,duration,prompt_name,errors,created_at "
-        "FROM sessions WHERE language=? ORDER BY created_at DESC LIMIT 100", (lang,)
-    ).fetchall()
-    sessions = [dict(r) for r in rows]
-    wpms = [r['wpm'] for r in sessions if r.get('wpm')]
-    return jsonify({
-        "sessions": sessions,
-        "best_wpm":       round(max(wpms), 1) if wpms else 0,
-        "avg_wpm":        round(sum(wpms)/len(wpms), 1) if wpms else 0,
-        "total_sessions": len(sessions),
-        "total_words":    sum(r.get('words_typed',0) for r in sessions),
-    })
-
-@app.route('/api/stats_all')
-def get_stats_all():
-    db   = get_db()
-    rows = db.execute(
-        "SELECT wpm,avg_wpm,accuracy,words_typed,duration,prompt_name,language,errors,created_at "
-        "FROM sessions ORDER BY created_at DESC LIMIT 200"
-    ).fetchall()
-    sessions = [dict(r) for r in rows]
-    wpms = [r['wpm'] for r in sessions if r.get('wpm')]
-    return jsonify({
-        "sessions": sessions,
-        "best_wpm":       round(max(wpms), 1) if wpms else 0,
-        "avg_wpm":        round(sum(wpms)/len(wpms), 1) if wpms else 0,
-        "total_sessions": len(sessions),
-        "total_words":    sum(r.get('words_typed',0) for r in sessions),
-    })
+    username=request.args.get('username',''); db=get_db()
+    q=("SELECT wpm,avg_wpm,accuracy,words_typed,duration,prompt_name,errors,username,created_at "
+       "FROM sessions WHERE language=?")
+    args=[lang]
+    if username: q+=" AND username=?"; args.append(username)
+    q+=" ORDER BY created_at DESC LIMIT 100"
+    rows=[dict(r) for r in db.execute(q,args).fetchall()]
+    wpms=[r['wpm'] for r in rows if r.get('wpm')]
+    return jsonify({"sessions":rows,"best_wpm":round(max(wpms),1) if wpms else 0,
+                    "avg_wpm":round(sum(wpms)/len(wpms),1) if wpms else 0,
+                    "total_sessions":len(rows),"total_words":sum(r.get('words_typed',0) for r in rows)})
 
 @app.route('/api/leaderboard')
 def leaderboard():
-    db   = get_db()
-    lang = request.args.get('lang')
-    if lang and lang != 'all':
-        rows = db.execute(
-            "SELECT username,language,MAX(wpm) best_wpm,AVG(accuracy) avg_acc,"
-            "COUNT(*) sessions FROM sessions WHERE language=? "
-            "GROUP BY username,language ORDER BY best_wpm DESC LIMIT 20", (lang,)
-        ).fetchall()
-    else:
-        rows = db.execute(
-            "SELECT username,language,MAX(wpm) best_wpm,AVG(accuracy) avg_acc,"
-            "COUNT(*) sessions FROM sessions "
-            "GROUP BY username,language ORDER BY best_wpm DESC LIMIT 20"
-        ).fetchall()
+    rows=get_db().execute(
+        "SELECT username,language,MAX(wpm) best_wpm,AVG(accuracy) avg_acc,COUNT(*) sessions "
+        "FROM sessions GROUP BY username,language ORDER BY best_wpm DESC LIMIT 20").fetchall()
     return jsonify([dict(r) for r in rows])
+
+@app.route('/api/books/status')
+def books_status():
+    return jsonify({t:{"ready":_bpath(t).exists() and _bpath(t).stat().st_size>2000,"author":a}
+                    for t,(g,a) in GUTENBERG.items()})
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "ok"})
+    rdy=sum(1 for t in GUTENBERG if _bpath(t).exists() and _bpath(t).stat().st_size>2000)
+    return jsonify({"status":"ok","books":f"{rdy}/{len(GUTENBERG)}"})
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+if __name__=='__main__':
+    app.run(host='0.0.0.0',port=int(os.environ.get('PORT',5000)),debug=False)
