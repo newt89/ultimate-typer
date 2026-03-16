@@ -2,7 +2,7 @@
 """Ultimate Typer — Backend API
 Languages: English, Russian, Arabic (Quran), Sanskrit (Bhagavad Gita + Home Row)
 """
-import os, re, time, sqlite3, unicodedata
+import os, json, re, time, sqlite3, unicodedata
 from pathlib import Path
 from flask import Flask, jsonify, request, g
 from flask_cors import CORS
@@ -62,6 +62,73 @@ def get_db():
 def close_db(e=None):
     db = g.pop('db', None)
     if db: db.close()
+
+# ── All 114 Surahs ────────────────────────────────────────────────────────────
+SURAHS = [
+    (1,"الفاتحة","Al-Fatiha",7),(2,"البقرة","Al-Baqara",286),
+    (3,"آل عمران","Al-Imran",200),(4,"النساء","An-Nisa",176),
+    (5,"المائدة","Al-Maida",120),(6,"الأنعام","Al-Anam",165),
+    (7,"الأعراف","Al-Araf",206),(8,"الأنفال","Al-Anfal",75),
+    (9,"التوبة","At-Tawba",129),(10,"يونس","Yunus",109),
+    (11,"هود","Hud",123),(12,"يوسف","Yusuf",111),
+    (13,"الرعد","Ar-Rad",43),(14,"إبراهيم","Ibrahim",52),
+    (15,"الحجر","Al-Hijr",99),(16,"النحل","An-Nahl",128),
+    (17,"الإسراء","Al-Isra",111),(18,"الكهف","Al-Kahf",110),
+    (19,"مريم","Maryam",98),(20,"طه","Ta-Ha",135),
+    (21,"الأنبياء","Al-Anbiya",112),(22,"الحج","Al-Hajj",78),
+    (23,"المؤمنون","Al-Muminun",118),(24,"النور","An-Nur",64),
+    (25,"الفرقان","Al-Furqan",77),(26,"الشعراء","Ash-Shuara",227),
+    (27,"النمل","An-Naml",93),(28,"القصص","Al-Qasas",88),
+    (29,"العنكبوت","Al-Ankabut",69),(30,"الروم","Ar-Rum",60),
+    (31,"لقمان","Luqman",34),(32,"السجدة","As-Sajda",30),
+    (33,"الأحزاب","Al-Ahzab",73),(34,"سبأ","Saba",54),
+    (35,"فاطر","Fatir",45),(36,"يس","Ya-Sin",83),
+    (37,"الصافات","As-Saffat",182),(38,"ص","Sad",88),
+    (39,"الزمر","Az-Zumar",75),(40,"غافر","Ghafir",85),
+    (41,"فصلت","Fussilat",54),(42,"الشورى","Ash-Shura",53),
+    (43,"الزخرف","Az-Zukhruf",89),(44,"الدخان","Ad-Dukhan",59),
+    (45,"الجاثية","Al-Jathiya",37),(46,"الأحقاف","Al-Ahqaf",35),
+    (47,"محمد","Muhammad",38),(48,"الفتح","Al-Fath",29),
+    (49,"الحجرات","Al-Hujurat",18),(50,"ق","Qaf",45),
+    (51,"الذاريات","Adh-Dhariyat",60),(52,"الطور","At-Tur",49),
+    (53,"النجم","An-Najm",62),(54,"القمر","Al-Qamar",55),
+    (55,"الرحمن","Ar-Rahman",78),(56,"الواقعة","Al-Waqia",96),
+    (57,"الحديد","Al-Hadid",29),(58,"المجادلة","Al-Mujadila",22),
+    (59,"الحشر","Al-Hashr",24),(60,"الممتحنة","Al-Mumtahana",13),
+    (61,"الصف","As-Saf",14),(62,"الجمعة","Al-Jumua",11),
+    (63,"المنافقون","Al-Munafiqun",11),(64,"التغابن","At-Taghabun",18),
+    (65,"الطلاق","At-Talaq",12),(66,"التحريم","At-Tahrim",12),
+    (67,"الملك","Al-Mulk",30),(68,"القلم","Al-Qalam",52),
+    (69,"الحاقة","Al-Haqqa",52),(70,"المعارج","Al-Maarij",44),
+    (71,"نوح","Nuh",28),(72,"الجن","Al-Jinn",28),
+    (73,"المزمل","Al-Muzzammil",20),(74,"المدثر","Al-Muddaththir",56),
+    (75,"القيامة","Al-Qiyama",40),(76,"الإنسان","Al-Insan",31),
+    (77,"المرسلات","Al-Mursalat",50),(78,"النبأ","An-Naba",40),
+    (79,"النازعات","An-Naziat",46),(80,"عبس","Abasa",42),
+    (81,"التكوير","At-Takwir",29),(82,"الانفطار","Al-Infitar",19),
+    (83,"المطففين","Al-Mutaffifin",36),(84,"الانشقاق","Al-Inshiqaq",25),
+    (85,"البروج","Al-Buruj",22),(86,"الطارق","At-Tariq",17),
+    (87,"الأعلى","Al-Ala",19),(88,"الغاشية","Al-Ghashiya",26),
+    (89,"الفجر","Al-Fajr",30),(90,"البلد","Al-Balad",20),
+    (91,"الشمس","Ash-Shams",15),(92,"الليل","Al-Layl",21),
+    (93,"الضحى","Ad-Duha",11),(94,"الشرح","Ash-Sharh",8),
+    (95,"التين","At-Tin",8),(96,"العلق","Al-Alaq",19),
+    (97,"القدر","Al-Qadr",5),(98,"البينة","Al-Bayyina",8),
+    (99,"الزلزلة","Az-Zalzala",8),(100,"العاديات","Al-Adiyat",11),
+    (101,"القارعة","Al-Qaria",11),(102,"التكاثر","At-Takathur",8),
+    (103,"العصر","Al-Asr",3),(104,"الهمزة","Al-Humaza",9),
+    (105,"الفيل","Al-Fil",5),(106,"قريش","Quraish",4),
+    (107,"الماعون","Al-Maun",7),(108,"الكوثر","Al-Kawthar",3),
+    (109,"الكافرون","Al-Kafirun",6),(110,"النصر","An-Nasr",3),
+    (111,"المسد","Al-Masad",5),(112,"الإخلاص","Al-Ikhlas",4),
+    (113,"الفلق","Al-Falaq",5),(114,"الناس","An-Nas",6),
+]
+
+ARABIC_EXTRA = {
+    "ayat_kursi": "الله لا اله الا هو الحي القيوم لا تاخذه سنة ولا نوم له ما في السماوات وما في الارض من ذا الذي يشفع عنده الا باذنه يعلم ما بين ايديهم وما خلفهم ولا يحيطون بشيء من علمه الا بما شاء وسع كرسيه السماوات والارض ولا يؤوده حفظهما وهو العلي العظيم",
+    "al_baqarah_1": "الم ذلك الكتاب لا ريب فيه هدى للمتقين الذين يؤمنون بالغيب ويقيمون الصلاة ومما رزقناهم ينفقون والذين يؤمنون بما انزل اليك وما انزل من قبلك وبالاخرة هم يوقنون اولئك على هدى من ربهم واولئك هم المفلحون",
+}
+
 
 # ── Text content ──────────────────────────────────────────────────────────────
 ENGLISH_TEXTS = {
@@ -401,6 +468,20 @@ SANSKRIT_LEVELS = {
 }
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+def _fetch_surah(n: int) -> str:
+    """Fetch surah text from alquran.cloud API."""
+    try:
+        url = f"https://api.alquran.cloud/v1/surah/{n}"
+        req = Request(url, headers={"User-Agent":"UltimateTyper/2.0","Accept":"application/json"})
+        from urllib.request import urlopen
+        data = json.loads(urlopen(req, timeout=12).read().decode())
+        if data.get("code") == 200:
+            return " ".join(a["text"] for a in data["data"]["ayahs"])
+    except:
+        pass
+    return ""
+
 @app.route('/api/languages')
 def get_languages():
     return jsonify([
@@ -430,13 +511,22 @@ def get_prompts(lang):
             {"id": "tolstoy",  "name": "Tolstoy — Anna Karenina","type": "literature","words": None},
         ])
     if lang == "arabic":
-        return jsonify([
-            {"id": "al_fatiha",    "name": "سورة الفاتحة — Al-Fatiha",    "type": "quran", "words": None},
-            {"id": "al_ikhlas",    "name": "سورة الإخلاص — Al-Ikhlas",   "type": "quran", "words": None},
-            {"id": "al_nas",       "name": "سورة الناس — An-Nas",         "type": "quran", "words": None},
-            {"id": "al_falaq",     "name": "سورة الفلق — Al-Falaq",       "type": "quran", "words": None},
-            {"id": "al_baqarah_1", "name": "سورة البقرة — Al-Baqarah (1)","type": "quran", "words": None},
-        ])
+        prompts = [
+            {"id": "al_fatiha",    "name": "001. الفاتحة — Al-Fatiha (built-in)",    "type": "quran", "desc": "7 ayahs"},
+            {"id": "al_ikhlas",    "name": "112. الإخلاص — Al-Ikhlas (built-in)",   "type": "quran", "desc": "4 ayahs"},
+            {"id": "al_nas",       "name": "114. الناس — An-Nas (built-in)",         "type": "quran", "desc": "6 ayahs"},
+            {"id": "al_falaq",     "name": "113. الفلق — Al-Falaq (built-in)",       "type": "quran", "desc": "5 ayahs"},
+            {"id": "ayat_kursi",   "name": "آية الكرسي — Ayat Al-Kursi (built-in)", "type": "quran", "desc": "1 ayah"},
+            {"id": "al_baqarah_1", "name": "002. البقرة — Al-Baqarah opening",       "type": "quran", "desc": "built-in"},
+        ]
+        for (n, name_ar, name_en, ayahs) in SURAHS:
+            prompts.append({
+                "id":   f"surah_{n}",
+                "name": f"{n:03d}. {name_ar} — {name_en}",
+                "type": "quran",
+                "desc": f"{ayahs} ayahs",
+            })
+        return jsonify(prompts)
     if lang == "sanskrit":
         prompts = []
         # Home row trainer levels
@@ -482,9 +572,18 @@ def get_words():
 
     elif lang == 'arabic':
         direction = 'rtl'
-        raw = ARABIC_TEXTS.get(prompt_id, ARABIC_TEXTS['al_fatiha'])
-        # Strip diacritics then deep-normalise each word
-        raw = _RE_DIAC.sub('', raw)
+        pid = prompt_id
+        if pid.startswith('surah_'):
+            try:
+                n = int(pid[6:])
+                raw = _fetch_surah(n) or ARABIC_TEXTS.get('al_fatiha','')
+            except:
+                raw = ARABIC_TEXTS.get('al_fatiha', '')
+        elif pid in ARABIC_EXTRA:
+            raw = ARABIC_EXTRA[pid]
+        else:
+            raw = ARABIC_TEXTS.get(pid, ARABIC_TEXTS.get('al_fatiha', ''))
+        raw   = _RE_DIAC.sub('', raw)
         words = [deep_norm_ar(w) for w in raw.split() if w]
 
     elif lang == 'sanskrit':
