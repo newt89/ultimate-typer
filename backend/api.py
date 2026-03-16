@@ -560,14 +560,39 @@ def get_stats(lang):
         "total_words":    sum(r.get('words_typed',0) for r in sessions),
     })
 
+@app.route('/api/stats_all')
+def get_stats_all():
+    db   = get_db()
+    rows = db.execute(
+        "SELECT wpm,avg_wpm,accuracy,words_typed,duration,prompt_name,language,errors,created_at "
+        "FROM sessions ORDER BY created_at DESC LIMIT 200"
+    ).fetchall()
+    sessions = [dict(r) for r in rows]
+    wpms = [r['wpm'] for r in sessions if r.get('wpm')]
+    return jsonify({
+        "sessions": sessions,
+        "best_wpm":       round(max(wpms), 1) if wpms else 0,
+        "avg_wpm":        round(sum(wpms)/len(wpms), 1) if wpms else 0,
+        "total_sessions": len(sessions),
+        "total_words":    sum(r.get('words_typed',0) for r in sessions),
+    })
+
 @app.route('/api/leaderboard')
 def leaderboard():
     db   = get_db()
-    rows = db.execute(
-        "SELECT username,language,MAX(wpm) best_wpm,AVG(accuracy) avg_acc,"
-        "COUNT(*) sessions FROM sessions "
-        "GROUP BY username,language ORDER BY best_wpm DESC LIMIT 20"
-    ).fetchall()
+    lang = request.args.get('lang')
+    if lang and lang != 'all':
+        rows = db.execute(
+            "SELECT username,language,MAX(wpm) best_wpm,AVG(accuracy) avg_acc,"
+            "COUNT(*) sessions FROM sessions WHERE language=? "
+            "GROUP BY username,language ORDER BY best_wpm DESC LIMIT 20", (lang,)
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT username,language,MAX(wpm) best_wpm,AVG(accuracy) avg_acc,"
+            "COUNT(*) sessions FROM sessions "
+            "GROUP BY username,language ORDER BY best_wpm DESC LIMIT 20"
+        ).fetchall()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/health')
