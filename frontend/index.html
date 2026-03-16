@@ -571,7 +571,7 @@ function onKD(e){
   // Disable Tab completely — prevent focus change and skip-word
   if(e.key==='Tab'){e.preventDefault();return;}
   if(e.key==='Backspace'){e.preventDefault();if(S.inp.length){S.inp=[...S.inp].slice(0,-1).join('');updateWord();}return;}
-  if(e.key==='Escape') endSession();
+  // Escape disabled — use BACK button instead
 }
 function onInput(e){
   const v=e.target.value; e.target.value='';
