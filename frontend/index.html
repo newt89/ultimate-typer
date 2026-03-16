@@ -18,7 +18,7 @@
 }
 html{font-size:16px}
 body{background:var(--bg);color:var(--text);font-family:var(--mono);min-height:100vh;overflow-x:hidden}
-#bg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.28}
+#bg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.38}
 #app{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:0 20px 80px}
 header{display:flex;align-items:center;justify-content:space-between;padding:20px 0 16px;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap}
 .logo{font-size:.88rem;font-weight:500;letter-spacing:.26em}
@@ -135,7 +135,7 @@ tr:hover td{background:rgba(11,16,24,.8)}
 <div id="app">
 
 <header>
-  <div class="logo">ULTIMATE<em>TYPER</em><small>v2.0</small></div>
+  <div class="logo">ULTIMATE<em>TYPER</em><small id="ver-lbl">  v3.0</small></div>
   <nav>
     <button class="nb on" onclick="go('home')">HOME</button>
     <button class="nb" onclick="go('stats')">STATS</button>
@@ -257,11 +257,14 @@ tr:hover td{background:rgba(11,16,24,.8)}
 <div id="toast"></div>
 <div id="umodal">
   <div class="mbox">
-    <h2>Welcome!</h2>
-    <p>Enter a name for the leaderboard.<br>You can stay anonymous too.</p>
-    <input id="uinput" type="text" placeholder="your name" maxlength="20" autocomplete="off" onkeydown="if(event.key==='Enter')saveUser()">
-    <button class="btn btn-c" style="width:100%" onclick="saveUser()">START TYPING</button>
-    <button class="btn btn-g" style="width:100%;margin-top:5px" onclick="saveUser('anonymous')">Stay anonymous</button>
+    <h2 id="modal-title">Create Account</h2>
+    <p id="modal-desc">Sign up to save stats &amp; leaderboard.</p>
+    <input id="uinput" type="text" placeholder="username" maxlength="20" autocomplete="off">
+    <input id="pinput" type="password" placeholder="password (min 4 chars)" maxlength="40" autocomplete="off" onkeydown="if(event.key==='Enter')doAuth()">
+    <div id="auth-err" style="color:var(--red);font-size:.65rem;margin:-4px 0 8px;min-height:14px"></div>
+    <button class="btn btn-c" style="width:100%" onclick="doAuth()">SIGN UP &amp; START</button>
+    <button class="btn btn-g" style="width:100%;margin-top:5px" onclick="switchAuth()">Already have account? LOG IN</button>
+    <button class="btn btn-g" style="width:100%;margin-top:5px;font-size:.62rem" onclick="saveUser('anonymous')">Stay anonymous</button>
   </div>
 </div>
 <script>
@@ -270,53 +273,67 @@ const API=(()=>{
   return 'https://ultimate-typer.onrender.com';
 })();
 
-// ── TUNNEL BG
+// ── ULTRA FRACTAL TUNNEL (fractal rooms + optical illusion)
 (function(){
   const cv=document.getElementById('bg'),ctx=cv.getContext('2d');
   let W,H; const t0=Date.now();
   const rsz=()=>{W=cv.width=innerWidth;H=cv.height=innerHeight};
   rsz(); addEventListener('resize',rsz);
+  function mandel(cx,cy,mx){let x=0,y=0,i=0;while(i<mx&&x*x+y*y<4){const tx=x*x-y*y+cx;y=2*x*y+cy;x=tx;i++;}return i;}
+  function julia(zx,zy,cx,cy,mx){let i=0;while(i<mx&&zx*zx+zy*zy<4){const tx=zx*zx-zy*zy+cx;zy=2*zx*zy+cy;zx=tx;i++;}return i;}
   function fr(){
     requestAnimationFrame(fr);
-    const t=(Date.now()-t0)/1000,sp=3.0;
-    const cz=t*sp*4;
-    const camx=.35*Math.sin(cz*.13)+.15*Math.sin(cz*.37+1.1);
-    const camy=.18*Math.sin(cz*.09+.7)+.08*Math.sin(cz*.29);
-    const lx=(.35*Math.cos(cz*.13)*.13+.15*Math.cos(cz*.37+1.1)*.37)*.4;
-    const ly=(.18*Math.cos(cz*.09+.7)*.09+.08*Math.cos(cz*.29)*.29)*.4;
+    const t=(Date.now()-t0)/1000,sp=2.8,cz=t*sp*3.5;
+    const camx=.32*Math.sin(cz*.11)+.14*Math.sin(cz*.31+1.0)+.07*Math.sin(cz*.67);
+    const camy=.17*Math.sin(cz*.08+.6)+.08*Math.sin(cz*.25)+.04*Math.sin(cz*.5+2.0);
+    const lx=(camx-(.32*Math.sin((cz+.1)*.11)+.14*Math.sin((cz+.1)*.31+1.0)))*.5;
+    const ly=(camy-(.17*Math.sin((cz+.1)*.08+.6)+.08*Math.sin((cz+.1)*.25)))*.5;
+    const gh=(t*.03)%1;
+    const phase=Math.floor(cz*.07)%5;
     ctx.clearRect(0,0,W,H);
     for(let row=0;row<H;row+=4) for(let col=0;col<W;col+=5){
       const sx=(col/W*2-1)*(W/H)*.45,sy=(row/H*2-1)*.5;
-      const rdx=sx-lx,rdy=sy-ly,rdz=.9;
+      const rdx=sx-lx,rdy=sy-ly,rdz=.85;
       const rl=Math.sqrt(rdx*rdx+rdy*rdy+rdz*rdz);
       const rx=rdx/rl,ry=rdy/rl,rz=rdz/rl;
-      let z=.05,s2=.06,ht='sky',dep=10,hu=0,hv=0;
-      for(let i=0;i<50;i++){
-        if(z>10) break;
-        const wx=camx+rx/Math.max(rz,.001)*z;
-        const wy=camy+ry/Math.max(rz,.001)*z;
-        const dp=cz+z;
-        const cx=.35*Math.sin(dp*.13)+.15*Math.sin(dp*.37+1.1);
-        const cy=.18*Math.sin(dp*.09+.7)+.08*Math.sin(dp*.29);
-        const dx=wx-cx,dy=wy-cy;
-        const ph=(dp%6)/6,op=ph>.15&&ph<.45&&dx>0;
-        const rl3=op?1.1:.55;
-        if(dy>.42){ht='f';dep=z;hu=wx;hv=dp;break;}
-        if(dy<-.42){ht='c';dep=z;hu=wx;hv=dp;break;}
-        if(dx>rl3){ht=op?'p':'w';dep=z;hu=dy;hv=dp;break;}
-        if(dx<-.55){ht='w';dep=z;hu=dy;hv=dp;break;}
-        z+=s2;s2=Math.min(.28,s2*1.08);
+      let z=.04,step=.055,hit='sky',dep=11,hu=0,hv=0;
+      for(let i=0;i<65;i++){
+        if(z>11)break;
+        const wx=camx+rx/Math.max(rz,.001)*z,wy=camy+ry/Math.max(rz,.001)*z,dp=cz+z;
+        const cx=.32*Math.sin(dp*.11)+.14*Math.sin(dp*.31+1.0);
+        const cy2=.17*Math.sin(dp*.08+.6)+.08*Math.sin(dp*.25);
+        const dx=wx-cx,dy=wy-cy2,dist=Math.sqrt(dx*dx+dy*dy);
+        if(phase===0||phase===3){
+          const rp=(dp%7)/7,so=rp>.12&&rp<.42&&dx>0,rl3=so?1.3:.58;
+          if(dy>.44){hit='floor';dep=z;hu=wx*2.5;hv=dp;break;}
+          if(dy<-.44){hit='ceil';dep=z;hu=wx*2.5;hv=dp;break;}
+          if(dx>rl3){hit=so?'portal':'wallR';dep=z;hu=dy*3;hv=dp;break;}
+          if(dx<-.58){hit='wallL';dep=z;hu=dy*3;hv=dp;break;}
+        }else if(phase===1){
+          if(dist>.65){hit='ring';dep=z;hu=Math.atan2(dy,dx);hv=dp;break;}
+        }else if(phase===2){
+          const aw=.72-Math.abs(dy)*.18;
+          if(Math.abs(dx)>aw){hit='arch';dep=z;hu=dy*2;hv=dp;break;}
+          if(dy>.85){hit='floor';dep=z;hu=wx*2;hv=dp;break;}
+        }else{
+          const wall=.5+.18*Math.sin(dp*2.3+wx*4.1)+.12*Math.sin(dp*5.7-wy*3.2)+.08*Math.sin(dp*11.3+wx*7.8);
+          if(dist>wall){hit='cave';dep=z;hu=Math.atan2(dy,dx);hv=dp;break;}
+        }
+        z+=step;step=Math.min(.32,step*1.09);
       }
-      const fog=Math.exp(-dep*.18),gh=(t*.04)%1;
-      let h2,bri;
-      if(ht==='sky'){const cd=Math.sqrt((sx-lx*.5)**2+(sy-ly*.5)**2);h2=gh;bri=cd<.07?Math.max(7,80-cd*600):Math.max(3,14-cd*22);}
-      else if(ht==='w'){const s3=(hv*2.5|0)%2;h2=gh+s3*.1;bri=fog*(38+22*Math.sin(hv*6+t*2)+s3*7);}
-      else if(ht==='f'){const g2=((hu*3|0)+(hv*2|0))%2;h2=gh+.35+g2*.08;bri=fog*(26+13*g2);}
-      else if(ht==='c'){const p2=((hu*2|0)+(hv*1.5|0))%3;h2=gh+.6+p2*.07;bri=fog*(30+16*(p2===0));}
-      else if(ht==='p'){h2=gh+.5+hv*.02;bri=Math.min(52,fog*60+18*Math.sin(hv*10+t*4));}
-      else{h2=gh;bri=3;}
-      bri=Math.max(3,Math.min(52,bri));
-      ctx.fillStyle=`hsl(${((h2*360+360)%360)|0},90%,${bri|0}%)`;
+      const fog=Math.exp(-dep*.16);
+      let h2,bri,sat=92;
+      if(hit==='sky'){const ctr=Math.sqrt((sx-lx*.4)**2+(sy-ly*.4)**2);const jc=julia((sx-lx*.4)*3.5,(sy-ly*.4)*3.5,.36*Math.cos(t*.11),.1*Math.sin(t*.07),16);h2=(gh+jc/16*.4)%1;bri=ctr<.06?Math.max(8,90-ctr*900):Math.max(2,8+jc*1.2);sat=95;}
+      else if(hit==='ring'){const rings=Math.sin(hv*5-t*sp*3.5)*.5+.5,spi=Math.sin(hu*4-hv*1.8+t*sp)*.5+.5,wb=Math.max(0,1-Math.abs(((hv*.3-t*.5)%1)-.5)*2*6);h2=(gh+hu/(2*Math.PI)+hv*.05)%1;bri=fog*(14+38*rings+24*spi+28*wb);sat=98;}
+      else if(hit==='wallR'||hit==='wallL'){const stripe=(hv*3|0)%2,pulse=Math.sin(hv*7+t*2.5)*.5+.5;h2=(gh+stripe*.12+hv*.008)%1;bri=fog*(28+26*pulse+stripe*9);}
+      else if(hit==='floor'){const tile=((hu*3.5|0)+(hv*2|0))%3,glow=Math.sin(hv*4-t*2)*.5+.5;h2=(gh+.32+tile*.06+hv*.006)%1;bri=fog*(22+14*glow+tile*6);}
+      else if(hit==='ceil'){const panel=((hu*2.5|0)+(hv*1.8|0))%4;h2=(gh+.58+panel*.055)%1;bri=fog*(25+18*(panel===0)+10*(panel===2));}
+      else if(hit==='portal'){const glow=Math.sin(hv*12+t*5)*.5+.5;h2=(gh+.48+hv*.015)%1;bri=Math.min(62,fog*48+glow*38);sat=100;}
+      else if(hit==='arch'){const stone=(hv*2|0+(hu*1.5|0))%3;h2=(gh+.22+stone*.04)%1;bri=fog*(20+12*stone);}
+      else if(hit==='cave'){const mc=mandel(hu*.6,hv*.06,12);h2=(gh+mc/12*.6+hv*.015)%1;bri=fog*(10+mc*3.2);sat=96;}
+      else{h2=gh;bri=2;}
+      bri=Math.max(2,Math.min(62,bri));
+      ctx.fillStyle=`hsl(${((h2*360+720)%360)|0},${sat}%,${bri|0}%)`;
       ctx.fillRect(col,row,5,4);
     }
   }
@@ -340,11 +357,24 @@ const elapsed=()=>{
   return Math.max(e,0);
 };
 
-// ── USERNAME
+// ── AUTH
+let _am='signup';
+function switchAuth(){_am=_am==='signup'?'login':'signup';document.getElementById('modal-title').textContent=_am==='signup'?'Create Account':'Log In';document.getElementById('modal-desc').textContent=_am==='signup'?'Sign up to save stats.':'Welcome back!';document.querySelector('#umodal .btn-c').textContent=_am==='signup'?'SIGN UP & START':'LOG IN';document.querySelector('#umodal .btn-g').textContent=_am==='signup'?'Already have account? LOG IN':'No account? SIGN UP';document.getElementById('auth-err').textContent='';}
+async function doAuth(){
+  const u=(document.getElementById('uinput').value||'').trim();
+  const p=(document.getElementById('pinput').value||'').trim();
+  if(!u){document.getElementById('auth-err').textContent='Enter a username';return;}
+  if(_am==='signup'&&p.length<4){document.getElementById('auth-err').textContent='Password 4+ chars';return;}
+  document.getElementById('auth-err').textContent='Connecting...';
+  const d=await api('/api/'+_am,'POST',{username:u,password:p});
+  if(!d||!d.ok){document.getElementById('auth-err').textContent=(d&&d.error)||'Error — try again';return;}
+  saveUser(d.username);
+}
 function saveUser(name){
-  const v=name||(document.getElementById('uinput').value.trim())||'anonymous';
+  const v=name||(document.getElementById('uinput')?document.getElementById('uinput').value.trim():'')||'anonymous';
   S.username=v; localStorage.setItem('ut_user',v);
   document.getElementById('umodal').classList.remove('show');
+  const lbl=document.getElementById('ver-lbl');if(lbl)lbl.textContent=v!=='anonymous'?'  👤 '+v:'  v3.0';
 }
 
 // ── NAV
