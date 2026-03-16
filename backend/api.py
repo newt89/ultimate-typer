@@ -466,7 +466,9 @@ def _fetch_surah(n):
     try:
         url=f"https://api.alquran.cloud/v1/surah/{n}"
         data=json.loads(urlopen(Request(url,headers={"User-Agent":"UltimateTyper/3.0"}),timeout=12).read().decode())
-        if data.get("code")==200: return " ".join(a["text"] for a in data["data"]["ayahs"])
+        if data.get("code")==200:
+            raw=" ".join(a["text"] for a in data["data"]["ayahs"])
+            return deep_norm_ar(_RE_DIAC.sub("",raw))
     except: pass
     return ""
 
