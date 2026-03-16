@@ -445,7 +445,7 @@ def get_words():
             try: raw=_fetch_surah(int(pid[6:])) or ARABIC_BUILTIN['al_fatiha']
             except: raw=ARABIC_BUILTIN['al_fatiha']
         else: raw=ARABIC_BUILTIN.get(pid,ARABIC_BUILTIN['al_fatiha'])
-        raw=_strip_all_ar(raw); words=[w for w in raw.split() if w]
+        raw=_strip_all_ar(raw); words=[w for w in raw.split() if w and not all(c in '*()[]{}' for c in w)]
 
     elif lang=='sanskrit':
         if pid.startswith('sa_level'):
@@ -465,6 +465,10 @@ def get_words():
 def _strip_all_ar(text):
     """Nuclear Arabic diacritic removal — strips everything non-letter."""
     if not text: return text
+    # Remove asterisks, verse markers, numbers, punctuation
+    text = re.sub(r'[\*\(\)\[\]\{\}0-9٠-٩۰-۹]', '', text)
+    text = re.sub(r'[\u06DD\u06DE\u06DF]', '', text)  # Arabic end of ayah markers
+    text = re.sub(r'[\u0600-\u0605]', '', text)  # Arabic number signs
     # All diacritic ranges
     text = re.sub(r'[\u0600-\u0615]', '', text)   # Arabic signs
     text = re.sub(r'[\u0610-\u061A]', '', text)   # honorifics
