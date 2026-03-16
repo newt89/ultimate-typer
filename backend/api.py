@@ -468,7 +468,11 @@ def _fetch_surah(n):
         data=json.loads(urlopen(Request(url,headers={"User-Agent":"UltimateTyper/3.0"}),timeout=12).read().decode())
         if data.get("code")==200:
             raw=" ".join(a["text"] for a in data["data"]["ayahs"])
-            return deep_norm_ar(_RE_DIAC.sub("",raw))
+            # Strip ALL diacritics and tajweed marks at source
+            raw=_RE_DIAC.sub("",raw)
+            raw=re.sub(r'\u0640','',raw)  # tatweel
+            raw=re.sub(r'[\u0610-\u061A]','',raw)  # honorifics
+            return deep_norm_ar(raw)
     except: pass
     return ""
 

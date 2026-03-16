@@ -184,9 +184,9 @@ tr:hover td{background:rgba(11,16,24,.8)}
     <div>PROGRESS&nbsp;<span id="prog-v">0%</span></div>
   </div>
   <div class="pbar-wrap"><div class="pbar" id="pbar"></div></div>
-  <div id="words-wrap">
+  <div id="words-wrap" onclick="focusInput()">
     <div id="words-outer"><div id="words-inner"></div></div>
-    <div id="fov" onclick="focusInput()">CLICK TO FOCUS &nbsp;&middot;&nbsp; START TYPING</div>
+    <div id="fov">CLICK TO FOCUS &nbsp;&middot;&nbsp; START TYPING</div>
   </div>
   <input id="inp" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" oninput="onInput(event)" onkeydown="onKD(event)">
   <div id="pause-ov" style="display:none">&#9646;&#9646;&nbsp; PAUSED &nbsp;&#9646;&#9646;<div style="font-size:.62rem;margin-top:6px">Click RESUME to continue</div></div>
@@ -257,13 +257,13 @@ tr:hover td{background:rgba(11,16,24,.8)}
 <div id="toast"></div>
 <div id="umodal">
   <div class="mbox">
-    <h2 id="modal-title">Create Account</h2>
-    <p id="modal-desc">Sign up to save stats &amp; leaderboard.</p>
-    <input id="uinput" type="text" placeholder="username" maxlength="20" autocomplete="off">
+    <h2 id="modal-title">Welcome!</h2>
+    <p id="modal-desc">Sign up to save stats &amp; appear on the leaderboard.</p>
+    <input id="uinput" type="text" placeholder="username" maxlength="20" autocomplete="off" onkeydown="if(event.key==='Enter')document.getElementById('pinput').focus()">
     <input id="pinput" type="password" placeholder="password (min 4 chars)" maxlength="40" autocomplete="off" onkeydown="if(event.key==='Enter')doAuth()">
     <div id="auth-err" style="color:var(--red);font-size:.65rem;margin:-4px 0 8px;min-height:14px"></div>
     <button class="btn btn-c" style="width:100%" onclick="doAuth()">SIGN UP &amp; START</button>
-    <button class="btn btn-g" style="width:100%;margin-top:5px" onclick="switchAuth()">Already have account? LOG IN</button>
+    <button class="btn btn-g" style="width:100%;margin-top:5px" onclick="switchAuthMode()">Already have account? LOG IN</button>
     <button class="btn btn-g" style="width:100%;margin-top:5px;font-size:.62rem" onclick="saveUser('anonymous')">Stay anonymous</button>
   </div>
 </div>
@@ -273,68 +273,152 @@ const API=(()=>{
   return 'https://ultimate-typer.onrender.com';
 })();
 
-// ── ULTRA FRACTAL TUNNEL (fractal rooms + optical illusion)
+// ── ULTRA FRACTAL TUNNEL BG (optical illusion — rotating rooms + infinite zoom)
 (function(){
   const cv=document.getElementById('bg'),ctx=cv.getContext('2d');
   let W,H; const t0=Date.now();
   const rsz=()=>{W=cv.width=innerWidth;H=cv.height=innerHeight};
   rsz(); addEventListener('resize',rsz);
-  function mandel(cx,cy,mx){let x=0,y=0,i=0;while(i<mx&&x*x+y*y<4){const tx=x*x-y*y+cx;y=2*x*y+cy;x=tx;i++;}return i;}
-  function julia(zx,zy,cx,cy,mx){let i=0;while(i<mx&&zx*zx+zy*zy<4){const tx=zx*zx-zy*zy+cx;zy=2*zx*zy+cy;zx=tx;i++;}return i;}
+
+  // Mandelbrot iteration count
+  function mandel(cx,cy,mx){
+    let x=0,y=0,i=0;
+    while(i<mx&&x*x+y*y<4){const tx=x*x-y*y+cx;y=2*x*y+cy;x=tx;i++;}
+    return i;
+  }
+
+  // Julia set
+  function julia(zx,zy,cx,cy,mx){
+    let i=0;
+    while(i<mx&&zx*zx+zy*zy<4){const tx=zx*zx-zy*zy+cx;zy=2*zx*zy+cy;zx=tx;i++;}
+    return i;
+  }
+
   function fr(){
     requestAnimationFrame(fr);
-    const t=(Date.now()-t0)/1000,sp=2.8,cz=t*sp*3.5;
+    const t=(Date.now()-t0)/1000;
+    const sp=2.8;
+    const cz=t*sp*3.5;
+
+    // Camera path — sinusoidal winding through 3D space
     const camx=.32*Math.sin(cz*.11)+.14*Math.sin(cz*.31+1.0)+.07*Math.sin(cz*.67);
     const camy=.17*Math.sin(cz*.08+.6)+.08*Math.sin(cz*.25)+.04*Math.sin(cz*.5+2.0);
     const lx=(camx-(.32*Math.sin((cz+.1)*.11)+.14*Math.sin((cz+.1)*.31+1.0)))*.5;
     const ly=(camy-(.17*Math.sin((cz+.1)*.08+.6)+.08*Math.sin((cz+.1)*.25)))*.5;
+
+    // Global hue slowly cycles
     const gh=(t*.03)%1;
+
+    // Phase determines room type (fractal, corridor, circular, cathedral)
     const phase=Math.floor(cz*.07)%5;
+
     ctx.clearRect(0,0,W,H);
-    for(let row=0;row<H;row+=4) for(let col=0;col<W;col+=5){
-      const sx=(col/W*2-1)*(W/H)*.45,sy=(row/H*2-1)*.5;
-      const rdx=sx-lx,rdy=sy-ly,rdz=.85;
+
+    // Pixel step — coarser = faster (mobile friendly)
+    const PS=5, PR=4;
+
+    for(let row=0;row<H;row+=PR) for(let col=0;col<W;col+=PS){
+      const sx=(col/W*2-1)*(W/H)*.45;
+      const sy=(row/H*2-1)*.5;
+      const rdx=sx-lx, rdy=sy-ly, rdz=.85;
       const rl=Math.sqrt(rdx*rdx+rdy*rdy+rdz*rdz);
-      const rx=rdx/rl,ry=rdy/rl,rz=rdz/rl;
-      let z=.04,step=.055,hit='sky',dep=11,hu=0,hv=0;
+      const rx=rdx/rl, ry=rdy/rl, rz=rdz/rl;
+
+      let z=.04, step=.055, hit='sky', dep=11, hu=0, hv=0;
+
       for(let i=0;i<65;i++){
-        if(z>11)break;
-        const wx=camx+rx/Math.max(rz,.001)*z,wy=camy+ry/Math.max(rz,.001)*z,dp=cz+z;
+        if(z>11) break;
+        const wx=camx+rx/Math.max(rz,.001)*z;
+        const wy=camy+ry/Math.max(rz,.001)*z;
+        const dp=cz+z;
+
+        // Tunnel centre wanders
         const cx=.32*Math.sin(dp*.11)+.14*Math.sin(dp*.31+1.0);
-        const cy2=.17*Math.sin(dp*.08+.6)+.08*Math.sin(dp*.25);
-        const dx=wx-cx,dy=wy-cy2,dist=Math.sqrt(dx*dx+dy*dy);
+        const cy=.17*Math.sin(dp*.08+.6)+.08*Math.sin(dp*.25);
+        const dx=wx-cx, dy=wy-cy;
+        const dist=Math.sqrt(dx*dx+dy*dy);
+
         if(phase===0||phase===3){
-          const rp=(dp%7)/7,so=rp>.12&&rp<.42&&dx>0,rl3=so?1.3:.58;
+          // RECTANGULAR CORRIDOR with side rooms
+          const roomPhase=(dp%7)/7;
+          const sideOpen=roomPhase>.12&&roomPhase<.42&&dx>0;
+          const rLim=sideOpen?1.3:.58;
           if(dy>.44){hit='floor';dep=z;hu=wx*2.5;hv=dp;break;}
           if(dy<-.44){hit='ceil';dep=z;hu=wx*2.5;hv=dp;break;}
-          if(dx>rl3){hit=so?'portal':'wallR';dep=z;hu=dy*3;hv=dp;break;}
+          if(dx>rLim){hit=sideOpen?'portal':'wallR';dep=z;hu=dy*3;hv=dp;break;}
           if(dx<-.58){hit='wallL';dep=z;hu=dy*3;hv=dp;break;}
-        }else if(phase===1){
+        } else if(phase===1){
+          // CIRCULAR TUNNEL with fractal rings
           if(dist>.65){hit='ring';dep=z;hu=Math.atan2(dy,dx);hv=dp;break;}
-        }else if(phase===2){
-          const aw=.72-Math.abs(dy)*.18;
-          if(Math.abs(dx)>aw){hit='arch';dep=z;hu=dy*2;hv=dp;break;}
+        } else if(phase===2){
+          // CATHEDRAL — tall arch
+          const archW=.72-Math.abs(dy)*.18;
+          if(Math.abs(dx)>archW){hit='arch';dep=z;hu=dy*2;hv=dp;break;}
           if(dy>.85){hit='floor';dep=z;hu=wx*2;hv=dp;break;}
-        }else{
+        } else {
+          // FRACTAL CAVE — irregular walls using sin harmonics
           const wall=.5+.18*Math.sin(dp*2.3+wx*4.1)+.12*Math.sin(dp*5.7-wy*3.2)+.08*Math.sin(dp*11.3+wx*7.8);
           if(dist>wall){hit='cave';dep=z;hu=Math.atan2(dy,dx);hv=dp;break;}
         }
-        z+=step;step=Math.min(.32,step*1.09);
+        z+=step; step=Math.min(.32,step*1.09);
       }
+
       const fog=Math.exp(-dep*.16);
       let h2,bri,sat=92;
-      if(hit==='sky'){const ctr=Math.sqrt((sx-lx*.4)**2+(sy-ly*.4)**2);const jc=julia((sx-lx*.4)*3.5,(sy-ly*.4)*3.5,.36*Math.cos(t*.11),.1*Math.sin(t*.07),16);h2=(gh+jc/16*.4)%1;bri=ctr<.06?Math.max(8,90-ctr*900):Math.max(2,8+jc*1.2);sat=95;}
-      else if(hit==='ring'){const rings=Math.sin(hv*5-t*sp*3.5)*.5+.5,spi=Math.sin(hu*4-hv*1.8+t*sp)*.5+.5,wb=Math.max(0,1-Math.abs(((hv*.3-t*.5)%1)-.5)*2*6);h2=(gh+hu/(2*Math.PI)+hv*.05)%1;bri=fog*(14+38*rings+24*spi+28*wb);sat=98;}
-      else if(hit==='wallR'||hit==='wallL'){const stripe=(hv*3|0)%2,pulse=Math.sin(hv*7+t*2.5)*.5+.5;h2=(gh+stripe*.12+hv*.008)%1;bri=fog*(28+26*pulse+stripe*9);}
-      else if(hit==='floor'){const tile=((hu*3.5|0)+(hv*2|0))%3,glow=Math.sin(hv*4-t*2)*.5+.5;h2=(gh+.32+tile*.06+hv*.006)%1;bri=fog*(22+14*glow+tile*6);}
-      else if(hit==='ceil'){const panel=((hu*2.5|0)+(hv*1.8|0))%4;h2=(gh+.58+panel*.055)%1;bri=fog*(25+18*(panel===0)+10*(panel===2));}
-      else if(hit==='portal'){const glow=Math.sin(hv*12+t*5)*.5+.5;h2=(gh+.48+hv*.015)%1;bri=Math.min(62,fog*48+glow*38);sat=100;}
-      else if(hit==='arch'){const stone=(hv*2|0+(hu*1.5|0))%3;h2=(gh+.22+stone*.04)%1;bri=fog*(20+12*stone);}
-      else if(hit==='cave'){const mc=mandel(hu*.6,hv*.06,12);h2=(gh+mc/12*.6+hv*.015)%1;bri=fog*(10+mc*3.2);sat=96;}
-      else{h2=gh;bri=2;}
+
+      if(hit==='sky'){
+        // Vanishing point — use Julia set for colour
+        const ctr=Math.sqrt((sx-lx*.4)**2+(sy-ly*.4)**2);
+        const jx=(sx-lx*.4)*3.5, jy=(sy-ly*.4)*3.5;
+        const jc=julia(jx,jy,.36*Math.cos(t*.11),.1*Math.sin(t*.07),16);
+        h2=(gh+jc/16*.4)%1;
+        bri=ctr<.06?Math.max(8,90-ctr*900):Math.max(2,8+jc*1.2);
+        sat=95;
+      } else if(hit==='ring'){
+        // Rings + spiral colour
+        const rings=Math.sin(hv*5-t*sp*3.5)*.5+.5;
+        const spi=Math.sin(hu*4-hv*1.8+t*sp)*.5+.5;
+        const wfrac=Math.abs(((hv*.3-t*.5)%1)-.5)*2;
+        const wb=Math.max(0,1-wfrac*6);
+        h2=(gh+hu/(2*Math.PI)+hv*.05)%1;
+        bri=fog*(14+38*rings+24*spi+28*wb);
+        sat=98;
+      } else if(hit==='wallR'||hit==='wallL'){
+        const stripe=(hv*3|0)%2;
+        const pulse=Math.sin(hv*7+t*2.5)*.5+.5;
+        h2=(gh+stripe*.12+hv*.008)%1;
+        bri=fog*(28+26*pulse+stripe*9);
+      } else if(hit==='floor'){
+        const tile=((hu*3.5|0)+(hv*2|0))%3;
+        const glow=Math.sin(hv*4-t*2)*.5+.5;
+        h2=(gh+.32+tile*.06+hv*.006)%1;
+        bri=fog*(22+14*glow+tile*6);
+      } else if(hit==='ceil'){
+        const panel=((hu*2.5|0)+(hv*1.8|0))%4;
+        h2=(gh+.58+panel*.055)%1;
+        bri=fog*(25+18*(panel===0)+10*(panel===2));
+      } else if(hit==='portal'){
+        // Portal to side room — bright glowing edge
+        const glow=Math.sin(hv*12+t*5)*.5+.5;
+        h2=(gh+.48+hv*.015)%1;
+        bri=Math.min(62,fog*1.6*30+glow*38);
+        sat=100;
+      } else if(hit==='arch'){
+        const stone=(hv*2|0+(hu*1.5|0))%3;
+        const mortar=Math.abs((hu%(.52/3))/(.52/3)-.5)>.45?.1:0;
+        h2=(gh+.22+stone*.04+mortar*.2)%1;
+        bri=fog*(20+12*stone+mortar*25);
+      } else if(hit==='cave'){
+        // Fractal cave — use mandelbrot for colour variation
+        const mx=12, mc=mandel(hu*.6,hv*.06,mx);
+        h2=(gh+mc/mx*.6+hv*.015)%1;
+        bri=fog*(10+mc*3.2);
+        sat=96;
+      } else {h2=gh;bri=2;}
+
       bri=Math.max(2,Math.min(62,bri));
       ctx.fillStyle=`hsl(${((h2*360+720)%360)|0},${sat}%,${bri|0}%)`;
-      ctx.fillRect(col,row,5,4);
+      ctx.fillRect(col,row,PS,PR);
     }
   }
   fr();
@@ -358,23 +442,31 @@ const elapsed=()=>{
 };
 
 // ── AUTH
-let _am='signup';
-function switchAuth(){_am=_am==='signup'?'login':'signup';document.getElementById('modal-title').textContent=_am==='signup'?'Create Account':'Log In';document.getElementById('modal-desc').textContent=_am==='signup'?'Sign up to save stats.':'Welcome back!';document.querySelector('#umodal .btn-c').textContent=_am==='signup'?'SIGN UP & START':'LOG IN';document.querySelector('#umodal .btn-g').textContent=_am==='signup'?'Already have account? LOG IN':'No account? SIGN UP';document.getElementById('auth-err').textContent='';}
+let _authMode='signup';
+function switchAuthMode(){
+  _authMode=_authMode==='signup'?'login':'signup';
+  document.getElementById('modal-title').textContent=_authMode==='signup'?'Create Account':'Log In';
+  document.getElementById('modal-desc').textContent=_authMode==='signup'?'Sign up to save stats & leaderboard.':'Welcome back!';
+  document.querySelector('#umodal .btn-c').textContent=_authMode==='signup'?'SIGN UP & START':'LOG IN & START';
+  document.querySelector('#umodal .btn-g').textContent=_authMode==='signup'?'Already have account? LOG IN':'No account? SIGN UP';
+  document.getElementById('auth-err').textContent='';
+}
 async function doAuth(){
   const u=(document.getElementById('uinput').value||'').trim();
   const p=(document.getElementById('pinput').value||'').trim();
   if(!u){document.getElementById('auth-err').textContent='Enter a username';return;}
-  if(_am==='signup'&&p.length<4){document.getElementById('auth-err').textContent='Password 4+ chars';return;}
-  document.getElementById('auth-err').textContent='Connecting...';
-  const d=await api('/api/'+_am,'POST',{username:u,password:p});
-  if(!d||!d.ok){document.getElementById('auth-err').textContent=(d&&d.error)||'Error — try again';return;}
+  if(_authMode==='signup'&&p.length<4){document.getElementById('auth-err').textContent='Password must be 4+ chars';return;}
+  document.getElementById('auth-err').textContent='';
+  const d=await api('/api/'+_authMode,'POST',{username:u,password:p});
+  if(!d){document.getElementById('auth-err').textContent='Server error';return;}
+  if(!d.ok){document.getElementById('auth-err').textContent=d.error||'Error';return;}
   saveUser(d.username);
 }
 function saveUser(name){
-  const v=name||(document.getElementById('uinput')?document.getElementById('uinput').value.trim():'')||'anonymous';
+  const v=name||(document.getElementById('uinput').value.trim())||'anonymous';
   S.username=v; localStorage.setItem('ut_user',v);
   document.getElementById('umodal').classList.remove('show');
-  const lbl=document.getElementById('ver-lbl');if(lbl)lbl.textContent=v!=='anonymous'?'  👤 '+v:'  v3.0';
+  document.querySelector('header .logo small').textContent=v!=='anonymous'?'  👤 '+v:'  v2.0';
 }
 
 // ── NAV
@@ -429,10 +521,14 @@ const cc=()=>S.lang==='arabic'?'ara':S.lang==='sanskrit'?'dev':'lat';
 function renderWords(){
   const t=document.getElementById('words-inner'); t.innerHTML='';
   S.words.forEach((word,wi)=>{
+    // Arabic: render whole word as one span so letters connect properly
+    if(S.lang==='arabic'){
+      t.appendChild(renderArabicWord(word,wi,wi===S.wi,wi<S.wi));
+      return;
+    }
     const div=document.createElement('div');
     div.className='w'+(wi===S.wi?' cur':wi<S.wi?' done':''); div.id='w'+wi;
-    const displayWord=S.lang==='arabic'?[...stripTajweed(word)]:[...word];
-    displayWord.forEach((ch,ci)=>{
+    [...word].forEach((ch,ci)=>{
       const sp=document.createElement('span');
       sp.className='ch '+cc(); sp.id='c'+wi+'_'+ci; sp.textContent=ch;
       sp.classList.add(wi<S.wi?'ok':wi===S.wi?(ci<[...S.inp].length?([...S.inp][ci]===ch?'ok':'bad'):ci===[...S.inp].length?'cur':'dim'):'dim');
@@ -443,6 +539,20 @@ function renderWords(){
   scrollToCur();
 }
 function updateWord(){
+  if(S.lang==='arabic'){
+    // Arabic: compare whole typed word against whole target word
+    const word=S.words[S.wi]||'';
+    const sp=document.getElementById('c'+S.wi+'_0');
+    if(!sp) return;
+    const typedNorm=nc(S.inp);
+    const wordNorm=nc(word);
+    if(S.inp.length===0) sp.className='ch ara dim';
+    else if(typedNorm===wordNorm.slice(0,typedNorm.length))
+      sp.className='ch ara ok';
+    else
+      sp.className='ch ara bad';
+    return;
+  }
   const word=[...S.words[S.wi]||''],typed=[...S.inp],cls=cc();
   word.forEach((ch,ci)=>{
     const sp=document.getElementById('c'+S.wi+'_'+ci);
@@ -458,6 +568,8 @@ function scrollToCur(){
 
 // ── INPUT
 function onKD(e){
+  // Disable Tab completely — prevent focus change and skip-word
+  if(e.key==='Tab'){e.preventDefault();return;}
   if(e.key==='Backspace'){e.preventDefault();if(S.inp.length){S.inp=[...S.inp].slice(0,-1).join('');updateWord();}return;}
   if(e.key==='Escape') endSession();
 }
@@ -477,19 +589,31 @@ function onInput(e){
   });
   updateWord(); tick();
 }
+// Full Arabic normalisation — strips ALL tajweed/diacritics
 function nc(ch){
-  // Strip ALL diacritics/tajweed marks
   ch=ch.replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g,'');
   ch=ch.replace(/\u0640/g,''); // tatweel
   ch=ch.replace(/[\u0622\u0623\u0625\u0671-\u0675]/g,'\u0627');
   ch=ch.replace(/\u0629/g,'\u0647');
-  ch=ch.replace(/\u0649/g,'\u064A');
-  ch=ch.replace(/[\u0621\u0654\u0655]/g,''); // hamza standalone
+  ch=ch.replace(/[\u0649\u06CC\u0626]/g,'\u064A');
+  ch=ch.replace(/[\u0621\u0654\u0655]/g,'');
   return ch.normalize('NFC');
 }
-// Strip tajweed from a full word before rendering
-function stripTajweed(w){
-  return w.replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u0640\u0621\u0654\u0655]/g,'').normalize('NFC');
+// Render Arabic words as connected text using CSS — whole word as one span
+function renderArabicWord(word,wi,isCur,isPast){
+  const div=document.createElement('div');
+  div.className='w'+(isCur?' cur':isPast?' done':'');
+  div.id='w'+wi;
+  // For Arabic: render the WHOLE word as a single text node so letters connect
+  // Use a single span with the full word — no per-character splitting
+  const sp=document.createElement('span');
+  sp.className='ch ara';
+  sp.id='c'+wi+'_0';
+  sp.textContent=word;
+  if(isPast) sp.classList.add('ok');
+  else if(isCur) sp.classList.add('dim');
+  div.appendChild(sp);
+  return div;
 }
 function commitWord(){
   S.correct++; S.rollWin.push({t:Date.now(),c:S.correct});
@@ -506,19 +630,25 @@ function commitWord(){
 function togglePause(){
   if(!S.startTime) return;
   if(S.pausedAt){
+    // RESUME
     S.totalPaused+=Date.now()-S.pausedAt; S.pausedAt=null; S.rollWin=[];
     document.getElementById('pause-btn').textContent='\u23F8 PAUSE';
     document.getElementById('pause-btn').classList.remove('pa');
     document.getElementById('pause-ov').style.display='none';
     document.getElementById('words-wrap').style.display='block';
+    // Restart timer only on resume
+    clearInterval(S.timer);
+    S.timer=setInterval(tick,200);
     focusInput();
   } else {
+    // PAUSE — stop timer completely
     S.pausedAt=Date.now();
+    clearInterval(S.timer); S.timer=null;
     document.getElementById('pause-btn').textContent='\u25B6 RESUME';
     document.getElementById('pause-btn').classList.add('pa');
     document.getElementById('pause-ov').style.display='block';
     document.getElementById('words-wrap').style.display='none';
-    clearInterval(S.timer); S.timer=null;
+    document.getElementById('inp').blur();
   }
 }
 
@@ -542,7 +672,7 @@ function fmtT(s){const m=s/60|0;return m>0?m+'m'+(s%60|0)+'s':(s|0)+'s';}
 function fmtEta(s){if(!s||s<=0||s>86400) return '\u2014';const m=s/60|0,h=m/60|0;return h>0?h+'h'+m%60+'m':m>0?m+'m'+(s%60|0)+'s':(s|0)+'s';}
 
 function tick(){
-  if(!S.startTime||S.pausedAt){if(S.pausedAt)clearInterval(S.timer);return;}
+  if(!S.startTime||S.pausedAt) return;
   const e=elapsed(),wpm=getWpm();
   const tot=S.correct+S.errors,acc=tot?Math.round(S.correct/tot*100):100;
   const pct=Math.round(S.wi/S.words.length*100);
@@ -589,7 +719,6 @@ function endSession(){clearInterval(S.timer);S.timer=null;go('home');}
 
 // ── FOCUS
 function focusInput(){
-  if(S.pausedAt) return;
   document.getElementById('inp').focus();
   document.getElementById('fov').classList.add('hide');
   if(!S.timer&&S.startTime&&!S.pausedAt) S.timer=setInterval(tick,200);
