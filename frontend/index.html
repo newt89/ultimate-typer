@@ -77,7 +77,7 @@ nav{display:flex;gap:4px;flex-wrap:wrap}
 .w.done{opacity:.35}
 .ch{transition:color .04s;line-height:1.4}
 .ch.lat{font-family:var(--mono);font-size:1.42rem}
-.ch.ara{font-family:var(--arab);font-size:1.9rem}
+.ch.ara{font-family:var(--arab);font-size:1.9rem;display:inline;unicode-bidi:normal}
 .ch.dev{font-family:var(--dev);font-size:1.65rem}
 .ch.ok{color:var(--green)}.ch.bad{color:var(--red);text-decoration:underline}
 .ch.cur{color:var(--cyan);border-bottom:2px solid var(--cyan)}.ch.dim{color:var(--muted)}
@@ -521,14 +521,11 @@ const cc=()=>S.lang==='arabic'?'ara':S.lang==='sanskrit'?'dev':'lat';
 function renderWords(){
   const t=document.getElementById('words-inner'); t.innerHTML='';
   S.words.forEach((word,wi)=>{
-    // Arabic: render whole word as one span so letters connect properly
-    if(S.lang==='arabic'){
-      t.appendChild(renderArabicWord(word,wi,wi===S.wi,wi<S.wi));
-      return;
-    }
     const div=document.createElement('div');
     div.className='w'+(wi===S.wi?' cur':wi<S.wi?' done':''); div.id='w'+wi;
-    [...word].forEach((ch,ci)=>{
+    // Use spread for per-character — Arabic letters stay connected via CSS unicode-bidi
+    const chars=[...word];
+    chars.forEach((ch,ci)=>{
       const sp=document.createElement('span');
       sp.className='ch '+cc(); sp.id='c'+wi+'_'+ci; sp.textContent=ch;
       sp.classList.add(wi<S.wi?'ok':wi===S.wi?(ci<[...S.inp].length?([...S.inp][ci]===ch?'ok':'bad'):ci===[...S.inp].length?'cur':'dim'):'dim');
@@ -539,20 +536,6 @@ function renderWords(){
   scrollToCur();
 }
 function updateWord(){
-  if(S.lang==='arabic'){
-    // Arabic: compare whole typed word against whole target word
-    const word=S.words[S.wi]||'';
-    const sp=document.getElementById('c'+S.wi+'_0');
-    if(!sp) return;
-    const typedNorm=nc(S.inp);
-    const wordNorm=nc(word);
-    if(S.inp.length===0) sp.className='ch ara dim';
-    else if(typedNorm===wordNorm.slice(0,typedNorm.length))
-      sp.className='ch ara ok';
-    else
-      sp.className='ch ara bad';
-    return;
-  }
   const word=[...S.words[S.wi]||''],typed=[...S.inp],cls=cc();
   word.forEach((ch,ci)=>{
     const sp=document.getElementById('c'+S.wi+'_'+ci);
