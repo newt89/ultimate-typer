@@ -91,6 +91,11 @@ nav{display:flex;gap:4px;flex-wrap:wrap}
 .ara-dot.cur{background:var(--cyan)}
 .w.ara-ok{border-color:var(--green)!important}
 .w.ara-bad{border-color:var(--red)!important}
+.w.ara-done-ok{border-color:var(--purple)!important;opacity:.7}
+.w.ara-done-err{border-color:var(--red)!important;opacity:.7}
+/* purple = word fully typed correctly and committed */
+.ch.complete{color:var(--purple)}
+.ara-dot.complete{background:var(--purple)}
 #inp{position:absolute;left:-9999px;opacity:0;width:1px;height:1px}
 #fov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(6,8,14,.8);backdrop-filter:blur(4px);border-radius:6px;cursor:pointer;font-size:.7rem;color:var(--muted);letter-spacing:.12em;transition:opacity .2s;z-index:2}
 #fov.hide{opacity:0;pointer-events:none}
@@ -629,7 +634,7 @@ function onInput(e){
   if(!v||S.pausedAt) return;
   if(!S.startTime){S.startTime=Date.now();S.timer=setInterval(tick,200);}
   [...v].forEach(ch=>{
-    if(ch===' '){if([...S.inp].length>0)commitWord();return;}
+    if(ch===' '){commitWord();return;}
     const word=[...S.words[S.wi]||''];
     const pos=[...S.inp].length,exp=word[pos]||'';
     if(exp){
@@ -778,17 +783,47 @@ function updateArabicWord(){
   }
 }
 function commitWord(){
+  const word=S.words[S.wi]||'';
+  const wordChars=S.lang==='arabic'?[...word.replace(/[ًٌٍَُِّْٰٕٖٜٟٓٔٗ٘ٙٚٛٝٞـ]/g,'')]:[...word];
+  const typedLen=[...S.inp].length;
+  const skipped=Math.max(0,wordChars.length-typedLen);
+  if(skipped>0){
+    S.errors+=skipped;
+    if(S.lang==='arabic'){
+      const bar=document.getElementById('bar'+S.wi);
+      if(bar) bar.querySelectorAll('.ara-dot').forEach(function(d,i){if(i>=typedLen)d.className='ara-dot bad';});
+    } else {
+      wordChars.forEach(function(_,ci){
+        if(ci>=typedLen){const sp=document.getElementById('c'+S.wi+'_'+ci);if(sp)sp.className='ch '+cc()+' bad';}
+      });
+    }
+  }
   S.correct++; S.rollWin.push({t:Date.now(),c:S.correct});
-  const wd=document.getElementById('w'+S.wi); if(wd)wd.className='w done';
+  const wd=document.getElementById('w'+S.wi);
+  if(wd){
+    if(S.lang==='arabic'){
+      const hadErr=wd.classList.contains('ara-bad')||skipped>0;
+      wd.className='w done '+(hadErr?'ara-done-err':'ara-done-ok');
+      if(!hadErr){const bar=document.getElementById('bar'+S.wi);if(bar)bar.querySelectorAll('.ara-dot').forEach(function(d){d.className='ara-dot complete';});}
+    } else {
+      wd.className='w done';
+      if(skipped===0){wordChars.forEach(function(_,ci){const sp=document.getElementById('c'+S.wi+'_'+ci);if(sp&&sp.classList.contains('ok'))sp.classList.replace('ok','complete');});}
+    }
+  }
   S.wi++; S.inp='';
   if(S.wi>=S.words.length){finishGame();return;}
-  const nw=document.getElementById('w'+S.wi); if(nw)nw.className='w cur';
-  const word=[...S.words[S.wi]||''],cls=cc();
-  word.forEach((ch,ci)=>{const sp=document.getElementById('c'+S.wi+'_'+ci);if(sp)sp.className='ch '+cls+' '+(ci===0?'cur':'dim');});
+  const nw=document.getElementById('w'+S.wi);if(nw)nw.className='w cur';
+  if(S.lang==='arabic'){
+    const nbar=document.getElementById('bar'+S.wi);
+    if(nbar)nbar.querySelectorAll('.ara-dot').forEach(function(d,i){d.className='ara-dot'+(i===0?' cur':'');});
+  } else {
+    const nword=[...S.words[S.wi]||''],cls=cc();
+    nword.forEach(function(_,ci){const sp=document.getElementById('c'+S.wi+'_'+ci);if(sp)sp.className='ch '+cls+' '+(ci===0?'cur':'dim');});
+  }
   scrollToCur(); tick();
 }
 
-// ── PAUSE
+
 function togglePause(){
   if(!S.startTime) return;
   if(S.pausedAt){
