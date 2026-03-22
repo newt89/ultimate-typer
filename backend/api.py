@@ -167,14 +167,16 @@ def _bpath(t): return BOOKS_DIR / f"{re.sub(r'[^\w]','_',t)[:45]}.txt"
 def _fetch_gutenberg_words(title, gid, max_words=3000):
     import random
     urls = [
-        f"https://www.gutenberg.org/files/{gid}/{gid}-0.txt",
         f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt",
-        f"https://gutenberg.org/ebooks/{gid}.txt.utf-8",
+        f"https://www.gutenberg.org/files/{gid}/{gid}-0.txt",
+        f"https://www.gutenberg.org/files/{gid}/{gid}.txt",
+        f"https://www.gutenberg.org/ebooks/{gid}.txt.utf-8",
+        f"https://gutenberg.pglaf.org/files/{gid}/{gid}-0.txt",
     ]
     for url in urls:
         try:
             req  = Request(url, headers={"User-Agent":"Mozilla/5.0 UltimateTyper/4.0"})
-            data = urlopen(req, timeout=22).read().decode("utf-8", errors="replace")
+            data = urlopen(req, timeout=30).read().decode("utf-8", errors="replace")
             for m in ["*** START OF THE PROJECT","*** START OF THIS PROJECT","*** START OF THIS"]:
                 i = data.find(m)
                 if i != -1: data = data[data.find("\n",i)+1:]; break
@@ -308,6 +310,14 @@ ARABIC_CLASSICAL = {
         "ان احق ما ابتدا به الخطيب في خطبته ومن في مقامه وابدى به القاضي في حكمه ومن في مجلسه ان يعلم ان البيان اسم جامع لكل شيء كشف لك قناع المعنى وهتك الحجاب دون الضمير حتى يفضي السامع الى حقيقته ويهجم على محصوله"),
     "imam_shafii_poetry": ("شعر الامام الشافعي — Imam Shafi'i", "poetry",
         "نعم لا تملك اللذات حرا وكيف تملك اللذات حرا صبرت على المكاره وهي تمضي وما تمضي عليك بها الامورا وما يبقى من الدنيا لحي ولا ما فات منها يعود طورا ومن كانت مطيته الليالي فانه وان ظلم المسيرا"),
+    "ghazali_ihya": ("إحياء علوم الدين — Al-Ghazali Ihya", "text",
+        "الحمد لله الذي شرح بنور معرفته صدور العارفين وانار ببهجة محبته قلوب المشتاقين وفتح لاهل الانس والمراقبة ابواب الوصول الى دار المقربين"),
+    "ibn_battuta_rihla": ("رحلة ابن بطوطة — Ibn Battuta Travels", "text",
+        "بسم الله الرحمن الرحيم لما تعمر الكعبة المشرفة وزرت قبر الرسول الكريم خرجت من مدينة طنجة مسقط راسي يوم الخميس ثاني رجب سنة خمس وعشرين وسبعمائة"),
+    "nahjul_balagha": ("نهج البلاغة — Nahjul Balagha", "text",
+        "الحمد لله الذي لا يبلغه بعد الثناء عليه ولا تحصيه سعة العد الأمد له والمُنتهى عنده ومن إليه المرجع"),
+    "maqamat_badi": ("مقامات بديع الزمان — Badi al-Zaman", "text",
+        "حدث عيسى بن هشام قال كنت بالبصرة مع صديق لي ونحن نتذاكر الاعراب وامرها والعرب واخبارها اذ وقع بصري على شيخ يلوح عليه النسك"),
 }
 
 RUSSIAN_TEXTS = {
@@ -334,12 +344,11 @@ RUSSIAN_TEXTS = {
 }
 
 ENGLISH_TEXTS = {
+    "Pangrams":          "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz judge my vow. The five boxing wizards jump quickly. Jackdaws love my big sphinx of quartz. How quickly daft jumping zebras vex.",
+    "Famous Quotes":     "To be or not to be that is the question whether tis nobler in the mind to suffer the slings and arrows of outrageous fortune. It was the best of times it was the worst of times it was the age of wisdom it was the age of foolishness. Call me Ishmael. It is a truth universally acknowledged that a single man in possession of a good fortune must be in want of a wife. All happy families are alike each unhappy family is unhappy in its own way.",
+    "Common Words":      "the be to of and a in that have it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us",
+    "Programming":       "function variable return if else while for loop array string boolean integer float class object method import export const let async await promise callback event listener module package library algorithm recursive iteration conditional inheritance polymorphism abstraction encapsulation",
     "Home Row Basics":   "asdf jkl; asdf jkl; add all fall hall sad fad lad flask glad flag ask dash flash shall glass salad false falls flask glass lads fads adds halls",
-    "Home Row Advanced": "asdf jkl; has had lad fad gash flash slash shall ash lash gal lag flag glad fad dad add all fall hall tall wall ball call stall install",
-    "Pangrams":          "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz judge my vow. The five boxing wizards jump quickly.",
-    "Common Words":      "the be to of and a in that have it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see",
-    "Programming":       "function variable return if else while for loop array string boolean integer float class object method import export const let async await promise callback event listener module package library algorithm recursive iteration",
-    "Famous Quotes":     "To be or not to be that is the question. It was the best of times it was the worst of times. All that glitters is not gold. Ask not what your country can do for you. I think therefore I am. Knowledge is power. The only way out is through.",
 }
 
 SANSKRIT_TRAINER = {
@@ -402,6 +411,16 @@ SANSKRIT_SCRIPTURES = {
         "अयमहमात्मविसारिभिरङ्गुलीर् अनुसरिष्यति तेजसि सोमवत् अनुचितमपि कालविलम्बनम् स्मरति मनो न पुरातनमद्य तत्"),
     "arthashastra": ("अर्थशास्त्र — Kautilya Arthashastra",
         "सुखस्य मूलम् धर्मः धर्मस्य मूलम् अर्थः अर्थस्य मूलम् राज्यम् राज्यस्य मूलम् इन्द्रियजयः इन्द्रियजयस्य मूलम् विनयः विनयस्य मूलम् वृद्धोपसेवा"),
+    "vishnu_sahasranama": ("विष्णुसहस्रनाम — Vishnu Sahasranama",
+        "विश्वम् विष्णुर्वषट्कारो भूतभव्यभवत्प्रभुः भूतकृद्भूतभृद्भावो भूतात्मा भूतभावनः पूतात्मा परमात्मा च मुक्तानाम् परमागतिः"),
+    "sundara_kanda_full": ("सुन्दरकाण्ड — Sundarakanda Extended",
+        "ततः रावणनीतायाः सीतायाः शत्रुकर्षणः ईयेष पदमन्वेष्टुम् चारणाचरिते पथि स ददर्श ततः स्त्रीभिर्बहुभिः परिवारिताम् देवीम् रावणगृहे सीताम् वनवास कृशाम् शुभाम्"),
+    "durga_saptashati": ("दुर्गासप्तशती — Devi Mahatmya",
+        "नमो देव्यै महादेव्यै शिवायै सततम् नमः नमः प्रकृत्यै भद्रायै नियताः प्रणताः स्म ताम् रौद्रायै नमो नित्यायै गौर्यै धात्र्यै नमो नमः ज्योत्स्नायै चेन्दुरूपिण्यै सुखायै सततम् नमः"),
+    "manava_dharmashastra": ("मनुस्मृति — Manusmriti",
+        "मनुम् एकाग्रमासीनम् अभिगम्य महर्षयः प्रतिपूज्य यथान्यायम् इदम् वचनम् अब्रुवन् भगवन् सर्ववर्णानाम् यथावदनुपूर्वशः अन्तरप्रभवाणाम् च धर्मान् नो वक्तुमर्हसि"),
+    "shankaracharya_viveka": ("विवेकचूडामणि — Adi Shankaracharya",
+        "जन्तूनाम् नरजन्म दुर्लभमतः पुम्स्त्वम् ततो विप्रता तस्माद्वैदिकधर्ममार्गपरता विद्वत्त्वमस्मात्परम् आत्मानात्मविवेचनम् स्वनुभवो ब्रह्मात्मना संस्थितिः मुक्तिर्नो शतजन्मकोटिसुकृतैः पुण्यैर्विना लभ्यते"),
 }
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -423,14 +442,15 @@ def get_languages():
 def get_prompts(lang):
     if lang=="english":
         out=[]
-        for name in ENGLISH_TEXTS:
-            out.append({"id":f"en_{re.sub(r'[^\\w]','_',name)}","name":name,"type":"text","author":"Built-in"})
+        # Books first (sorted by author then title)
         for title,(gid,auth) in sorted(GUTENBERG.items(),key=lambda x:(x[1][1],x[0])):
             p=_bpath(title); rdy=p.exists() and p.stat().st_size>2000
-            out.append({"id":f"book_{re.sub(r'[^\\w]','_',title)[:40]}","name":title,
-                        "type":"book","author":auth,"desc":"✓ ready" if rdy else "↓ loading..."})
+            out.append({"id":f"book_{re.sub(r'[^\w]','_',title)[:40]}","name":title,
+                        "type":"book","author":auth,"desc":"✓ cached" if rdy else "click to load from Gutenberg"})
+        # Built-in practice texts after
+        for name in ENGLISH_TEXTS:
+            out.append({"id":f"en_{re.sub(r'[^\w]','_',name)}","name":name,"type":"text","author":"Built-in"})
         return jsonify(out)
-
     if lang=="russian":
         names={
             "ru_home_row":"Домашний ряд — ФЫВА ОЛДЖ","ru_basics":"Основы — приветствия",
@@ -529,7 +549,9 @@ def get_words():
                     try: p.write_text(' '.join(words), encoding='utf-8')
                     except: pass
             if not words:
-                words=list(ENGLISH_TEXTS.values())[0].split()
+                # Return empty with message instead of gibberish home row text
+                return jsonify({'lang':lang,'words':[],'dir':'ltr',
+                    'error':f'Could not load book. Gutenberg may be slow. Try again.'})
         else:
             name=pid[3:].replace('_',' ')
             text=ENGLISH_TEXTS.get(name,list(ENGLISH_TEXTS.values())[0])
@@ -636,9 +658,21 @@ def get_stats(lang):
 
 @app.route('/api/leaderboard')
 def leaderboard():
-    rows=get_db().execute(
-        "SELECT username,language,MAX(wpm) best_wpm,AVG(accuracy) avg_acc,COUNT(*) sessions "
-        "FROM sessions GROUP BY username,language ORDER BY best_wpm DESC LIMIT 20").fetchall()
+    lang     = request.args.get('lang','')
+    group_by = request.args.get('group','prompt')  # 'prompt' or 'user'
+    db       = get_db()
+    base = ("SELECT username, language, prompt_name, "
+            "MAX(wpm) best_wpm, AVG(accuracy) avg_acc, "
+            "COUNT(*) sessions, SUM(words_typed) total_words "
+            "FROM sessions")
+    if lang and lang != 'all':
+        rows = db.execute(base+" WHERE language=? "
+            "GROUP BY username, language, prompt_name "
+            "ORDER BY best_wpm DESC LIMIT 50", (lang,)).fetchall()
+    else:
+        rows = db.execute(base+
+            " GROUP BY username, language, prompt_name "
+            "ORDER BY language, best_wpm DESC LIMIT 100").fetchall()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/books/status')

@@ -569,7 +569,11 @@ async function pickLang(lang,el){
 
 async function startGame(pid,pname){
   const d=await api('/api/words','POST',{lang:S.lang,prompt_id:pid});
-  if(!d||!d.words||!d.words.length){toast('Could not load words');return;}
+  if(!d){toast('Server error — try again');return;}
+  if(!d.words||!d.words.length){
+    toast(d.error||'Could not load words — book may be loading, try again in 5s');
+    return;
+  }
   clearInterval(S.timer);
   // Strip ALL tajweed — use actual Unicode chars in regex (not escape sequences)
   let cleanWords=d.words;
@@ -1022,13 +1026,29 @@ async function loadLB(lang){
   document.querySelectorAll('#lbtabs .stab').forEach(t=>t.classList.toggle('on',t.dataset.l===lang));
   const d=await api('/api/leaderboard'+(lang&&lang!=='all'?'?lang='+lang:''));
   const el=document.getElementById('lb-list');
-  if(!d||!d.length){el.innerHTML='<div style="color:var(--muted);padding:20px">No entries yet \u2014 be the first!</div>';return;}
-  const medals=['#1','#2','#3'];
-  el.innerHTML=d.map((r,i)=>{
-    const rc=i===0?'g':i===1?'s':i===2?'b':'';
-    const rank=i<3?medals[i]:i+1;
-    return '<div class="lb-row"><div class="lb-rank '+rc+'">'+rank+'</div><div class="lb-user">'+(r.username||'anonymous')+'<small>'+(r.sessions||0)+' session'+(r.sessions!==1?'s':'')+' &middot; '+Math.round(r.avg_acc||0)+'% avg acc</small></div><span class="lb-lang">'+(r.language||'?')+'</span><div class="lb-wpm">'+Math.round(r.best_wpm||0)+'<small> wpm</small></div></div>';
-  }).join('');
+  if(!d||!d.length){el.innerHTML='<div style="color:var(--muted);padding:20px">No entries yet</div>';return;}
+  const byLang={};
+  d.forEach(function(r){var l=r.language||'other';if(!byLang[l])byLang[l]=[];byLang[l].push(r);});
+  var langOrder=['english','russian','arabic','sanskrit'];
+  var langLabel={english:'🇬🇧 English',russian:'🇷🇺 Russian',arabic:'🕌 Arabic',sanskrit:'🕉️ Sanskrit'};
+  var html='';
+  langOrder.forEach(function(l){
+    var rows=byLang[l];
+    if(!rows||!rows.length) return;
+    rows.sort(function(a,b){return (b.best_wpm||0)-(a.best_wpm||0);});
+    html+='<div style="margin:18px 0 6px;font-size:.6rem;letter-spacing:.2em;color:var(--muted);text-transform:uppercase">'+(langLabel[l]||l)+'</div>';
+    rows.forEach(function(r,i){
+      var medals=['🥇','🥈','🥉'];
+      var rank=i<3?medals[i]:(i+1);
+      var rc=i===0?'g':i===1?'s':i===2?'b':'';
+      var prompt=(r.prompt_name||'').replace(/^\d{3}\. /,'');
+      var sp=prompt.length>40?prompt.slice(0,40)+'…':prompt;
+      html+='<div class="lb-row"><div class="lb-rank '+rc+'">'+rank+'</div>';
+      html+='<div class="lb-user">'+(r.username||'anonymous')+'<small>'+(sp||'—')+' &middot; '+(r.sessions||0)+' sessions &middot; '+Math.round(r.avg_acc||0)+'% acc</small></div>';
+      html+='<div class="lb-wpm">'+Math.round(r.best_wpm||0)+'<small> wpm</small></div></div>';
+    });
+  });
+  el.innerHTML=html||'<div style="color:var(--muted);padding:20px">No entries yet</div>';
 }
 
 // ── API / UTILS
@@ -1045,7 +1065,11 @@ function q(s){return(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
 // ── INIT
 // Show login prompt only when user clicks leaderboard or stats
 // Restore username display on load
-updateAuthBtn();
+(function(){
+  var saved=localStorage.getItem('ut_user');
+  if(saved){S.username=saved;}
+  updateAuthBtn();
+})();
 </script>
 </body>
 </html>
