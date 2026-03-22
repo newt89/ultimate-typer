@@ -162,28 +162,46 @@ GUTENBERG = {
     "The Mayor of Casterbridge":("143","Hardy"),
 }
 
-def _bpath(t): return BOOKS_DIR / f"{re.sub(r'[^\\w]','_',t)[:45]}.txt"
+def _bpath(t): return BOOKS_DIR / f"{re.sub(r'[^\w]','_',t)[:45]}.txt"
 
-def _dl_book(title, gid):
-    p = _bpath(title)
-    if p.exists() and p.stat().st_size > 2000: return True
-    for url in [f"https://www.gutenberg.org/files/{gid}/{gid}-0.txt",
-                f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt"]:
+def _fetch_gutenberg_words(title, gid, max_words=3000):
+    import random
+    urls = [
+        f"https://www.gutenberg.org/files/{gid}/{gid}-0.txt",
+        f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt",
+        f"https://gutenberg.org/ebooks/{gid}.txt.utf-8",
+    ]
+    for url in urls:
         try:
-            data = urlopen(Request(url, headers={"User-Agent":"Mozilla/5.0"}),
-                           timeout=25).read().decode("utf-8", errors="replace")
-            for m in ["*** START OF THE PROJECT","*** START OF THIS PROJECT"]:
+            req  = Request(url, headers={"User-Agent":"Mozilla/5.0 UltimateTyper/4.0"})
+            data = urlopen(req, timeout=22).read().decode("utf-8", errors="replace")
+            for m in ["*** START OF THE PROJECT","*** START OF THIS PROJECT","*** START OF THIS"]:
                 i = data.find(m)
                 if i != -1: data = data[data.find("\n",i)+1:]; break
             for m in ["*** END OF THE PROJECT","*** END OF THIS PROJECT"]:
                 i = data.find(m)
                 if i != -1: data = data[:i]; break
             text = " ".join(l.strip() for l in data.splitlines() if l.strip())
-            if len(text) < 2000: continue
-            p.write_text(text[:800000], encoding="utf-8")
-            return True
-        except: continue
-    return False
+            if len(text) < 1000: continue
+            start = random.randint(0, max(0, len(text) - 30000))
+            chunk = text[start:start+30000]
+            words = chunk.split()[:max_words]
+            for i, w in enumerate(words[:50]):
+                if w and w[0].isupper() and len(w) > 1:
+                    words = words[i:]; break
+            if words:
+                try: _bpath(title).write_text(' '.join(words), encoding='utf-8')
+                except: pass
+                return words
+        except Exception:
+            continue
+    return []
+
+def _dl_book(title, gid):
+    p = _bpath(title)
+    if p.exists() and p.stat().st_size > 2000: return True
+    words = _fetch_gutenberg_words(title, gid, max_words=100000)
+    return bool(words)
 
 def _bg_dl():
     for t,(gid,auth) in GUTENBERG.items():
@@ -264,6 +282,34 @@ ARABIC_BUILTIN = {
     "ar_rahman":          "الرحمن علم القران خلق الانسان علمه البيان الشمس والقمر بحسبان والنجم والشجر يسجدان والسماء رفعها ووضع الميزان",
 }
 
+# Arabic classical literature — bundled texts
+ARABIC_CLASSICAL = {
+    "kalila_wa_dimna":    ("كليلة ودمنة — Kalila wa Dimna", "text",
+        "زعموا ان ملكا من ملوك الهند كان له وزير حكيم عاقل يقال له بيدبا وكان هذا الملك يحب الحكمة ويطلبها ويكرم اهلها فسال الوزير ذات يوم ان يضع له كتابا في السياسة والتدبير فوضع له كليلة ودمنة وجعله على السنة البهائم والطير اذ كانوا يعلمون ان الملك يفهم ذلك ويعقله"),
+    "muallaqat_imru":     ("معلقة امرئ القيس — Mu'allaqat Imru al-Qays", "poetry",
+        "قفا نبك من ذكرى حبيب ومنزل بسقط اللوى بين الدخول فحومل فتوضح فالمقراة لم يعف رسمها لما نسجتها من جنوب وشمال ترى بعر الارآم في عرصاتها وقيعانها كانه حب فلفل كانه ان خرجت من مخدعها يا ابا ثروان ولدت"),
+    "muallaqat_zuhair":   ("معلقة زهير — Mu'allaqat Zuhair", "poetry",
+        "امن ام اوفى دمنة لم تكلم بحومانة الدراج فالمتثلم ودار لها بالرقمتين كانها مراجع وشم في نواشر معصم بها العين والارآم يمشين خلفة وارآم عين المالح المتوسم"),
+    "maqamat_hariri":     ("مقامات الحريري — Maqamat al-Hariri", "text",
+        "حدثنا الحارث بن همام قال سافرت في شبيبتي وكنت في ربيع عمري حين كنت احسب الغنى الغنيمة والشباب الغانمة فلما انتهيت في سفري الى البصرة وانقطعت بي النفقة نزلت بالجامع المنسوب الى علي والتمست من يرفدني بما اسد به خلتي"),
+    "alf_layla_1":        ("ألف ليلة وليلة — Arabian Nights (1)", "story",
+        "يحكى انه كان في قديم الزمان وسالف العصر والاوان ملك من ملوك ساسان في جزائر الهند والصين له جيوش وحشم وخدم وعبيد وجنود وكان له اخ يقال له شاه زمان ملك سمرقند الاعجم فمكث في مملكته يوما من الدهر"),
+    "alf_layla_sindbad":  ("ألف ليلة — قصة السندباد البحري", "story",
+        "كان في بغداد رجل فقير يحمل الاحمال على رأسه وكان اسمه السندباد الحمال فاتفق انه مر بباب دار رجل عظيم فوجد على الباب كراسي من جريد النخل وعليها جلوس التجار وارباب الاموال ووجد منها رائحة الطعام والشراب وسمع اصوات المغنيات والطنبور"),
+    "ibn_battuta_rihla":  ("رحلة ابن بطوطة — Ibn Battuta Travels", "text",
+        "بسم الله الرحمن الرحيم وصلى الله على سيدنا محمد وعلى اله وصحبه وسلم قال الشيخ الامام العالم الرحال جامع الاشتات ابو عبدالله محمد بن عبدالله بن محمد بن ابراهيم اللواتي الطنجي ابن بطوطة رضى الله عنه لما تعمر الكعبة المشرفة وزرت قبر الرسول الكريم"),
+    "ibn_khaldun_muq":    ("مقدمة ابن خلدون — Ibn Khaldun Muqaddima", "text",
+        "ان فن التاريخ من الفنون التي تتداولها الامم والاجيال وتشد اليه الركائب في كل جيل وتسمو الى معرفته السوقة والاغفال وتتنافس فيه الملوك والاقيال ويتساوى في فهمه العلماء والجهال اذ هو في ظاهره لا يزيد على اخبار عن الايام والدول والسوابق من القرون الاول"),
+    "mutanabbi_poetry":   ("شعر المتنبي — Al-Mutanabbi Poetry", "poetry",
+        "على قدر اهل العزم تاتي العزائم وتاتي على قدر الكرام المكارم وتعظم في عين الصغير صغارها وتصغر في عين العظيم العظائم انا الذي نظر الاعمى الى ادبي واسمعت كلماتي من به صمم الخيل والليل والبيداء تعرفني والسيف والرمح والقرطاس والقلم"),
+    "abu_nuwas_poetry":   ("شعر ابي نواس — Abu Nuwas Poetry", "poetry",
+        "دع عنك لومي فان اللوم اغراء وداوني بالتي كانت هي الداء صفراء لا تنزل الاحزان ساحتها لو مسها حجر مسته سراء من كف ذات حر كالعقيق يرى في خدها والنهود البيض احساء قامت باداء جواب حين قلت لها هلي مهيا قالت وهي حسناء"),
+    "jahiz_bayan":        ("البيان والتبيين — Al-Jahiz", "text",
+        "ان احق ما ابتدا به الخطيب في خطبته ومن في مقامه وابدى به القاضي في حكمه ومن في مجلسه ان يعلم ان البيان اسم جامع لكل شيء كشف لك قناع المعنى وهتك الحجاب دون الضمير حتى يفضي السامع الى حقيقته ويهجم على محصوله"),
+    "imam_shafii_poetry": ("شعر الامام الشافعي — Imam Shafi'i", "poetry",
+        "نعم لا تملك اللذات حرا وكيف تملك اللذات حرا صبرت على المكاره وهي تمضي وما تمضي عليك بها الامورا وما يبقى من الدنيا لحي ولا ما فات منها يعود طورا ومن كانت مطيته الليالي فانه وان ظلم المسيرا"),
+}
+
 RUSSIAN_TEXTS = {
     "ru_home_row":       "фыва олдж фыва олдж фыва олдж вол два жало дол лов фол вол жол дол ало дал жал вал дав",
     "ru_basics":         "привет мир как дела хорошо спасибо пожалуйста да нет может быть конечно понятно",
@@ -330,6 +376,34 @@ GITA = {
     18:{"name_en":"Moksha Sanyasa Yoga","verses":["सर्वधर्मान्परित्यज्य मामेकं शरणं व्रज अहं त्वां सर्वपापेभ्यो मोक्षयिष्यामि मा शुचः","य इमं परमं गुह्यं मद्भक्तेष्वभिधास्यति भक्तिं मयि परां कृत्वा मामेवैष्यत्यसंशयः"]},
 }
 
+# Sanskrit scriptures beyond the Gita
+SANSKRIT_SCRIPTURES = {
+    "upanishads_isha": ("ईशावास्योपनिषद् — Isha Upanishad",
+        "ईशावास्यमिदम् सर्वं यत्किञ्च जगत्यां जगत् तेन त्यक्तेन भुञ्जीथा मा गृधः कस्य स्विद्धनम् कुर्वन्नेवेह कर्माणि जिजीविषेच्छतम् समाः एवं त्वयि नान्यथेतोऽस्ति न कर्म लिप्यते नरे"),
+    "upanishads_kena": ("केनोपनिषद् — Kena Upanishad",
+        "केनेषितं पतति प्रेषितं मनः केन प्राणः प्रथमः प्रैति युक्तः केनेषितां वाचमिमां वदन्ति चक्षुः श्रोत्रं क उ देवो युनक्ति श्रोत्रस्य श्रोत्रं मनसो मनो यद्वाचो ह वाचं स उ प्राणस्य प्राणः चक्षुषश्चक्षुरतिमुच्य धीराः"),
+    "upanishads_mandukya": ("माण्डूक्योपनिषद् — Mandukya Upanishad",
+        "ॐ इत्येतदक्षरमिदम् सर्वम् तस्योपव्याख्यानम् भूतम् भवत् भविष्यदिति सर्वमोमकार एव यच्चान्यत् त्रिकालातीतम् तदप्योमकार एव सर्वम् ह्येतद् ब्रह्म अयमात्मा ब्रह्म सोयमात्मा चतुष्पात्"),
+    "panchatantra_1": ("पंचतन्त्र — Panchatantra (मित्रभेद)", "story",
+        "अस्ति मगधदेशे पाटलिपुत्रनाम नगरम् तत्र अमरशक्तिनाम राजा आसीत् तस्य त्रयः पुत्राः बहुशक्तिः उग्रशक्तिः अनन्तशक्तिश्च तेषाम् महामूर्खत्वम् दृष्ट्वा राजा चिन्तितः अभवत् किम् करोमि इति"),
+    "panchatantra_2": ("पंचतन्त्र — Panchatantra (मित्रसम्प्राप्ति)",
+        "अस्ति दक्षिणारण्ये महिलारोप्यनाम नगरम् तत्र हिरण्यकनाम मूषको वसति स्म तस्य च मित्रम् लघुपतनकनाम काकः आसीत् एकदा काकः अटन् गच्छन् दृष्टवान् यत् तृणबिन्दुनाम मृगः पाशे बद्धः"),
+    "ramayana_bala": ("रामायण बालकाण्ड — Ramayana Bala Kanda",
+        "तपःस्वाध्यायनिरतम् तपस्वी वाग्विदाम् वरम् नारदम् परिपप्रच्छ वाल्मीकिर्मुनिपुङ्गवम् को न्वस्मिन्साम्प्रतम् लोके गुणवान् कश्च वीर्यवान् धर्मज्ञश्च कृतज्ञश्च सत्यवाक्यो दृढव्रतः"),
+    "ramayana_sundara": ("रामायण सुन्दरकाण्ड — Ramayana Sundara Kanda",
+        "ततो रावणनीतायाः सीतायाः शत्रुकर्षणः ईयेष पदमन्वेष्टुम् चारणाचरिते पथि महेन्द्रस्य नगे तिष्ठन् दध्यौ वायुसुतस्तदा"),
+    "yoga_sutras": ("योगसूत्र — Patanjali Yoga Sutras",
+        "अथ योगानुशासनम् योगश्चित्तवृत्तिनिरोधः तदा द्रष्टुः स्वरूपेऽवस्थानम् वृत्तिसारूप्यमितरत्र प्रमाणविपर्ययविकल्पनिद्रास्मृतयः प्रत्यक्षानुमानागमाः प्रमाणानि विपर्ययो मिथ्याज्ञानमतद्रूपप्रतिष्ठम्"),
+    "chanakya_niti": ("चाणक्यनीति — Chanakya Niti",
+        "प्रणम्य शिरसा विष्णुम् त्रैलोक्याधिपतिम् प्रभुम् नानाशास्त्रोद्धृतम् वक्ष्ये राजनीतिसमुच्चयम् अधीत्य चतुरो वेदान् सर्वशास्त्राण्यनेकशः ब्रह्मतत्त्वम् न जानाति दर्वी पाकरसम् यथा"),
+    "kalidasa_shakuntala": ("अभिज्ञानशाकुन्तलम् — Kalidasa Shakuntala",
+        "या सृष्टिः स्रष्टुराद्या वहति विधिहुतम् या हविर्या च होत्री ये द्वे कालम् विधत्तः श्रुतिविषयगुणा या स्थिता व्याप्य विश्वम् याम् आहुः सर्वबीजप्रकृतिरिति यया प्राणिनः प्राणवन्तः प्रत्यक्षाभिः प्रपन्नस्तनुभिरवतु वस्ताभिरष्टाभिरीशः"),
+    "vikramorvashiya": ("विक्रमोर्वशीयम् — Kalidasa Vikramorvashiya",
+        "अयमहमात्मविसारिभिरङ्गुलीर् अनुसरिष्यति तेजसि सोमवत् अनुचितमपि कालविलम्बनम् स्मरति मनो न पुरातनमद्य तत्"),
+    "arthashastra": ("अर्थशास्त्र — Kautilya Arthashastra",
+        "सुखस्य मूलम् धर्मः धर्मस्य मूलम् अर्थः अर्थस्य मूलम् राज्यम् राज्यस्य मूलम् इन्द्रियजयः इन्द्रियजयस्य मूलम् विनयः विनयस्य मूलम् वृद्धोपसेवा"),
+}
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/api/languages')
 def get_languages():
@@ -340,9 +414,9 @@ def get_languages():
         {"id":"russian","name":"Русский","flag":"🇷🇺","dir":"ltr",
          "desc":f"{len(RUSSIAN_TEXTS)} texts — Pushkin · Tolstoy · Dostoevsky · Chekhov · Bulgakov"},
         {"id":"arabic","name":"العربية","flag":"🕌","dir":"rtl",
-         "desc":f"114 Surahs · {len(ARABIC_BUILTIN)} always available"},
+         "desc":f"114 Surahs + {len(ARABIC_CLASSICAL)} classical texts"},
         {"id":"sanskrit","name":"संस्कृतम्","flag":"🕉️","dir":"ltr",
-         "desc":f"Bhagavad Gita 18 chapters · {len(SANSKRIT_TRAINER)}-level trainer"},
+         "desc":f"Gita · Upanishads · Ramayana · Panchatantra · Yoga Sutras · {len(SANSKRIT_TRAINER)} trainer levels"},
     ])
 
 @app.route('/api/prompts/<lang>')
@@ -386,6 +460,10 @@ def get_prompts(lang):
             {"id":"al_yasin","name":"036. يس — Ya-Sin","type":"quran","desc":"built-in"},
             {"id":"ar_rahman","name":"055. الرحمن — Ar-Rahman","type":"quran","desc":"built-in"},
         ]
+        # Classical Arabic literature
+        for kid,(kname,ktype,_) in ARABIC_CLASSICAL.items():
+            out.append({"id":f"classical_{kid}","name":kname,"type":"text","desc":"Classical Arabic"})
+        # All 114 Surahs
         for (n,na,ne,ay) in SURAHS:
             out.append({"id":f"surah_{n}","name":f"{n:03d}. {na} — {ne}","type":"quran","desc":f"{ay} ayahs"})
         return jsonify(out)
@@ -411,6 +489,9 @@ def get_prompts(lang):
         for ch,d in GITA.items():
             out.append({"id":f"gita_{ch}","name":f"Ch.{ch:02d} — {d['name_en']}","type":"gita",
                         "desc":f"{len(d['verses'])} shlokas"})
+        # Sanskrit scriptures beyond the Gita
+        for sid,(sname,stext) in SANSKRIT_SCRIPTURES.items():
+            out.append({"id":f"scripture_{sid}","name":sname,"type":"text","desc":"Sanskrit Scripture"})
         return jsonify(out)
     return jsonify([])
 
@@ -422,14 +503,33 @@ def get_words():
     if lang=='english':
         if pid.startswith('book_'):
             bkey=pid[5:]
+            matched_title=None; matched_gid=None
             for title,(gid,auth) in GUTENBERG.items():
                 if re.sub(r'[^\w]','_',title)[:40]==bkey:
-                    p=_bpath(title)
-                    if not (p.exists() and p.stat().st_size>2000): _dl_book(title,gid)
-                    try: words=p.read_text(encoding='utf-8').split()[:3000]
+                    matched_title=title; matched_gid=gid; break
+            if matched_title:
+                # Try filesystem cache first
+                p=_bpath(matched_title)
+                if p.exists() and p.stat().st_size>2000:
+                    try:
+                        text=p.read_text(encoding='utf-8')
+                        import random
+                        start=random.randint(0,max(0,len(text)-25000))
+                        chunk=text[start:start+25000]
+                        words=chunk.split()[:3000]
+                        for i,w in enumerate(words[:30]):
+                            if w and w[0].isupper() and len(w)>1:
+                                words=words[i:]; break
                     except: pass
-                    break
-            if not words: words=list(ENGLISH_TEXTS.values())[0].split()
+                # If not cached, fetch directly from Gutenberg right now
+                if not words:
+                    words=_fetch_gutenberg_words(matched_title, matched_gid)
+                # Save to cache for next time
+                if words and not (p.exists() and p.stat().st_size>2000):
+                    try: p.write_text(' '.join(words), encoding='utf-8')
+                    except: pass
+            if not words:
+                words=list(ENGLISH_TEXTS.values())[0].split()
         else:
             name=pid[3:].replace('_',' ')
             text=ENGLISH_TEXTS.get(name,list(ENGLISH_TEXTS.values())[0])
@@ -440,7 +540,13 @@ def get_words():
 
     elif lang=='arabic':
         direction='rtl'
-        if pid in ARABIC_BUILTIN: raw=ARABIC_BUILTIN[pid]
+        if pid.startswith('classical_'):
+            kid=pid[10:]
+            if kid in ARABIC_CLASSICAL:
+                entry=ARABIC_CLASSICAL[kid]
+                raw=entry[2] if len(entry)>2 else entry[-1]
+            else: raw=ARABIC_BUILTIN['al_fatiha']
+        elif pid in ARABIC_BUILTIN: raw=ARABIC_BUILTIN[pid]
         elif pid.startswith('surah_'):
             try: raw=_fetch_surah(int(pid[6:])) or ARABIC_BUILTIN['al_fatiha']
             except: raw=ARABIC_BUILTIN['al_fatiha']
@@ -448,7 +554,14 @@ def get_words():
         raw=_strip_all_ar(raw); words=[w for w in raw.split() if w and not all(c in '*()[]{}' for c in w)]
 
     elif lang=='sanskrit':
-        if pid.startswith('sa_level'):
+        if pid.startswith('scripture_'):
+            sid=pid[10:]
+            if sid in SANSKRIT_SCRIPTURES:
+                entry=SANSKRIT_SCRIPTURES[sid]
+                raw=entry[-1]  # last element is always the text
+                words=raw.split()
+            else: words=(list(SANSKRIT_TRAINER.values())[0].split()*8)[:60]
+        elif pid.startswith('sa_level'):
             raw=SANSKRIT_TRAINER.get(pid,list(SANSKRIT_TRAINER.values())[0])
             words=(raw.split()*8)[:60]
         elif pid=='gita_all': words=' '.join(v for c in GITA.values() for v in c['verses']).split()
